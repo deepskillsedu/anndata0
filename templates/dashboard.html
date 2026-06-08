@@ -1,0 +1,1132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Smart Farm Digital Twin</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg:        #0c1422;
+  --bg2:       #111d2e;
+  --bg3:       #172538;
+  --bg4:       #1d2f46;
+  --border:    rgba(90,160,240,0.11);
+  --border2:   rgba(90,160,240,0.24);
+  --border3:   rgba(90,160,240,0.45);
+  --cyan:      #41c8f5;
+  --cyan-s:    rgba(65,200,245,0.13);
+  --cyan-g:    rgba(65,200,245,0.28);
+  --green:     #2edc9a;
+  --green-s:   rgba(46,220,154,0.13);
+  --green-g:   rgba(46,220,154,0.35);
+  --red:       #ff5b6d;
+  --red-s:     rgba(255,91,109,0.13);
+  --red-g:     rgba(255,91,109,0.4);
+  --amber:     #ffbd45;
+  --amber-s:   rgba(255,189,69,0.13);
+  --text:      #ddeeff;
+  --text-sub:  #7fa8cc;
+  --text-dim:  #3d5a7a;
+  --font:      'DM Sans', sans-serif;
+  --mono:      'DM Mono', monospace;
+  --r:         12px;
+  --r-lg:      16px;
+}
+
+*, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
+html { font-size: 16px; }
+
+body {
+  font-family: var(--font);
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  overflow-x: hidden;
+  line-height: 1.5;
+}
+
+body::after {
+  content:'';
+  position:fixed; inset:0;
+  background-image: radial-gradient(rgba(65,200,245,0.035) 1px, transparent 1px);
+  background-size: 30px 30px;
+  pointer-events:none;
+  z-index:0;
+}
+
+/* HEADER  */
+header {
+  position: sticky; top:0; z-index:100;
+  background: rgba(12,20,34,0.94);
+  backdrop-filter: blur(14px);
+  border-bottom: 1px solid var(--border2);
+  padding: 0 32px;
+  height: 60px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.logo { display:flex; align-items:center; gap:11px; }
+
+.logo-badge {
+  width:36px; height:36px;
+  background:var(--cyan-s);
+  border:1.5px solid var(--border2);
+  border-radius:9px;
+  display:grid; place-items:center;
+  font-size:17px;
+}
+
+.logo-text { font-size:17px; font-weight:700; letter-spacing:-0.02em; color:var(--text); }
+.logo-text em { font-style:normal; color:var(--cyan); }
+
+.header-right { display:flex; align-items:center; gap:18px; }
+
+.live-pill {
+  display:flex; align-items:center; gap:7px;
+  background:var(--green-s);
+  border:1px solid rgba(46,220,154,0.3);
+  border-radius:20px;
+  padding:5px 13px;
+  font-size:12px; font-weight:700; color:var(--green); letter-spacing:0.08em;
+}
+
+.live-dot {
+  width:7px; height:7px; border-radius:50%;
+  background:var(--green); box-shadow:0 0 7px var(--green);
+  animation:blink 2s ease-in-out infinite;
+}
+
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:.25} }
+
+.header-clock {
+  font-family:var(--mono); font-size:15px; font-weight:500;
+  color:var(--text-sub); letter-spacing:0.04em;
+}
+
+/*  PAGE  */
+.page {
+  position:relative; z-index:1;
+  padding:28px 32px 80px;
+  width:100%; max-width:1600px; margin:0 auto;
+}
+
+/*  SECTION HEAD  */
+.sec-head {
+  display:flex; align-items:center; gap:12px;
+  margin:36px 0 18px;
+}
+.sec-head:first-child { margin-top:0; }
+
+.sec-bar {
+  width:4px; height:22px;
+  background:var(--cyan); border-radius:2px;
+  box-shadow:0 0 10px var(--cyan-g); flex-shrink:0;
+}
+
+.sec-title {
+  font-size:12px; font-weight:700;
+  letter-spacing:0.14em; text-transform:uppercase;
+  color:var(--cyan); white-space:nowrap;
+}
+
+.sec-line { flex:1; height:1px; background:var(--border); }
+
+/*  OVERVIEW GRID  */
+.overview-grid {
+  display:grid;
+  grid-template-columns:repeat(5,1fr);
+  gap:14px;
+}
+
+.ov-card {
+  background:var(--bg2); border:1px solid var(--border);
+  border-radius:var(--r); padding:20px 22px 18px;
+  position:relative; overflow:hidden;
+  transition:border-color .2s, transform .2s, box-shadow .2s;
+}
+
+.ov-card::before {
+  content:''; position:absolute; top:0; left:0; right:0; height:2px;
+  background:linear-gradient(90deg,transparent,var(--cyan) 50%,transparent);
+  opacity:0; transition:opacity .2s;
+}
+.ov-card:hover { border-color:var(--border2); transform:translateY(-2px); box-shadow:0 8px 28px rgba(0,0,0,.3); }
+.ov-card:hover::before { opacity:1; }
+
+.ov-label { font-size:13px; font-weight:600; letter-spacing:0.05em; text-transform:uppercase; color:var(--text-sub); margin-bottom:10px; }
+.ov-value { font-family:var(--mono); font-size:30px; font-weight:500; letter-spacing:-0.02em; color:var(--text); }
+
+.c-cyan  { color:var(--cyan) !important; }
+.c-green { color:var(--green) !important; }
+.c-red   { color:var(--red) !important; }
+.c-amber { color:var(--amber) !important; }
+
+/*  SENSOR GRID  */
+.sensor-grid {
+  display:grid;
+  grid-template-columns:repeat(7,1fr);
+  gap:12px;
+}
+
+.sn-card {
+  background:var(--bg2); border:1px solid var(--border);
+  border-radius:var(--r); padding:18px 16px;
+  transition:border-color .2s, box-shadow .2s;
+}
+.sn-card:hover { border-color:var(--cyan); box-shadow:0 0 18px var(--cyan-s); }
+
+.sn-icon { font-size:22px; margin-bottom:10px; display:block; }
+
+.sn-label { font-size:13px; font-weight:600; letter-spacing:0.05em; text-transform:uppercase; color:var(--text-sub); margin-bottom:7px; }
+.sn-value { font-family:var(--mono); font-size:28px; font-weight:500; color:var(--cyan); letter-spacing:-0.02em; }
+
+/*  DIAGNOSTICS  */
+.diag-row { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+
+.diag-card {
+  background:var(--bg2); border:1px solid var(--border);
+  border-radius:var(--r); overflow:hidden;
+}
+
+.diag-card.alerts {
+  border-left:3px solid var(--red);
+  /* Chain fade-in first, then border pulse — fixes opacity:0 override bug */
+  animation: fi .42s ease .04s both, alertBorderPulse 2.5s ease-in-out 0.5s infinite;
+}
+@keyframes alertBorderPulse {
+  0%,100%{border-left-color:var(--red);box-shadow:none}
+  50%{border-left-color:#ff8090;box-shadow:-4px 0 18px var(--red-g)}
+}
+
+.diag-card.recs {
+  border-left:3px solid var(--green);
+  /* Chain fade-in first, then border pulse — fixes opacity:0 override bug */
+  animation: fi .42s ease .08s both, recsBorderPulse 3s ease-in-out 0.5s infinite;
+}
+@keyframes recsBorderPulse {
+  0%,100%{border-left-color:var(--green);box-shadow:none}
+  50%{border-left-color:#60ffcc;box-shadow:-4px 0 18px var(--green-g)}
+}
+
+.diag-header {
+  padding:14px 20px; border-bottom:1px solid var(--border);
+  background:var(--bg3); font-size:15px; font-weight:700;
+  display:flex; align-items:center; gap:8px;
+}
+
+.diag-card.alerts .diag-header { color:var(--red); }
+.diag-card.recs   .diag-header { color:var(--green); }
+
+.alert-count-badge {
+  font-family:var(--mono); font-size:11px;
+  background:var(--red); color:#fff;
+  border-radius:20px; padding:1px 8px; margin-left:4px;
+  animation:badgePulse 1.2s ease-in-out infinite;
+}
+@keyframes badgePulse {
+  0%,100%{opacity:1;transform:scale(1)}
+  50%{opacity:.6;transform:scale(0.93)}
+}
+
+.diag-body { padding:4px 0; min-height:60px; }
+
+.diag-loading {
+  display:flex; align-items:center; gap:10px;
+  padding:18px 20px; color:var(--text-dim); font-size:13px;
+}
+.diag-loading .spin {
+  width:14px; height:14px; border-radius:50%;
+  border:2px solid var(--border2);
+  border-top-color:var(--cyan);
+  animation:spin .7s linear infinite;
+  flex-shrink:0;
+}
+@keyframes spin { to{transform:rotate(360deg)} }
+
+.diag-item {
+  display:flex; align-items:center; gap:14px;
+  padding:16px 22px; border-bottom:1px solid var(--border);
+  font-size:16px; font-weight:600; color:var(--text); line-height:1.5;
+}
+.diag-item:last-child { border-bottom:none; }
+
+.diag-arrow {
+  color:var(--cyan); font-size:20px;
+  flex-shrink:0; line-height:1;
+}
+
+/*  ALERT ROWS: full red background flash  */
+.diag-item.is-alert {
+  font-size:17px;
+  font-weight:700;
+  color:#fff;
+  letter-spacing:0.01em;
+  background: rgba(255,60,75,0.35);
+  animation: alertRowFlash 1.4s ease-in-out infinite;
+  border-bottom:1px solid rgba(255,60,75,0.3);
+}
+.diag-item.is-alert .diag-arrow {
+  color:#fff;
+  font-size:22px;
+  text-shadow: 0 0 10px rgba(255,60,75,0.9);
+}
+@keyframes alertRowFlash {
+  0%   { background:rgba(255,60,75,0.18); color:#ffb3bb; }
+  50%  { background:rgba(255,60,75,0.72); color:#ffffff; box-shadow:inset 0 0 28px rgba(255,40,60,0.5); }
+  100% { background:rgba(255,60,75,0.18); color:#ffb3bb; }
+}
+
+/*  RECOMMENDATION ROWS  */
+.diag-item.is-rec {
+  font-size:16px;
+  font-weight:600;
+  color:var(--text);
+}
+.diag-item.is-rec .diag-arrow { color:var(--green); font-size:20px; }
+
+/*  MONITOR HEADER  */
+.monitor-header {
+  display:flex; align-items:center; justify-content:space-between;
+  flex-wrap:wrap; gap:14px; margin:36px 0 18px;
+}
+
+.monitor-label { display:flex; align-items:center; gap:12px; }
+
+.interval-wrap { display:flex; align-items:center; gap:10px; }
+
+.interval-label-text { font-size:12px; font-weight:600; letter-spacing:0.1em; text-transform:uppercase; color:var(--text-dim); }
+
+.interval-select-wrap { position:relative; }
+
+.interval-select {
+  appearance:none;
+  background:var(--bg3); border:1.5px solid var(--border2);
+  border-radius:10px; color:var(--text);
+  font-family:var(--mono); font-size:13px; font-weight:500;
+  padding:9px 42px 9px 16px; cursor:pointer; outline:none;
+  min-width:170px;
+  transition:border-color .2s, box-shadow .2s;
+}
+.interval-select:hover { border-color:var(--border3); }
+.interval-select:focus { border-color:var(--cyan); box-shadow:0 0 0 3px var(--cyan-s); }
+.interval-select option, .interval-select optgroup { background:#152030; color:var(--text); }
+
+.select-arrow { position:absolute; right:13px; top:50%; transform:translateY(-50%); pointer-events:none; color:var(--cyan); font-size:13px; }
+
+/*  GRAFANA BLOCKS  */
+.grafana-block {
+  background:var(--bg2); border:1px solid var(--border);
+  border-radius:var(--r-lg); overflow:hidden; margin-bottom:16px;
+}
+
+.grafana-block-header {
+  padding:13px 22px; background:var(--bg3);
+  border-bottom:1px solid var(--border);
+  display:flex; align-items:center; gap:10px;
+}
+.grafana-block-header span { font-size:19px; }
+.grafana-block-header h3 { font-size:15px; font-weight:600; color:var(--text); letter-spacing:-0.01em; }
+
+.grafana-panels {
+  display:grid; grid-template-columns:1fr 1fr;
+}
+
+.grafana-pane { padding:16px 20px; }
+.grafana-pane:first-child { border-right:1px solid var(--border); }
+
+/*  Pane label row: label + maximize btn  */
+.grafana-pane-top {
+  display:flex; align-items:center; justify-content:space-between;
+  margin-bottom:10px;
+}
+
+.grafana-pane-label {
+  font-size:11px; font-weight:700;
+  letter-spacing:0.13em; text-transform:uppercase;
+  color:var(--text-dim); font-family:var(--mono);
+}
+
+/* Maximize button .... only show on trend panes */
+.maximize-btn {
+  display:inline-flex; align-items:center; gap:5px;
+  background:var(--bg4); border:1px solid var(--border2);
+  border-radius:7px; padding:4px 10px;
+  font-size:11px; font-weight:600; font-family:var(--mono);
+  color:var(--text-sub); cursor:pointer; letter-spacing:0.06em;
+  transition:background .15s, border-color .15s, color .15s;
+  flex-shrink:0;
+}
+.maximize-btn:hover {
+  background:var(--cyan-s); border-color:var(--cyan); color:var(--cyan);
+}
+.maximize-btn svg { width:12px; height:12px; flex-shrink:0; }
+
+.grafana-pane iframe {
+  width:100%; height:240px; border:none; border-radius:8px;
+  display:block; background:var(--bg3);
+}
+
+/*  TREND MAXIMIZE MODAL  */
+.trend-modal-overlay {
+  position:fixed; inset:0; z-index:9000;
+  background:rgba(6,12,22,0.88);
+  backdrop-filter:blur(8px);
+  display:flex; align-items:center; justify-content:center;
+  padding:24px;
+  opacity:0; pointer-events:none;
+  transition:opacity .22s ease;
+}
+.trend-modal-overlay.open {
+  opacity:1; pointer-events:all;
+}
+
+.trend-modal {
+  background:var(--bg2); border:1px solid var(--border3);
+  border-radius:var(--r-lg); overflow:hidden;
+  width:100%; max-width:1280px; height:80vh;
+  display:flex; flex-direction:column;
+  box-shadow:0 32px 80px rgba(0,0,0,.7), 0 0 0 1px var(--border2);
+  transform:scale(0.96); transition:transform .22s ease;
+}
+.trend-modal-overlay.open .trend-modal { transform:scale(1); }
+
+.trend-modal-header {
+  display:flex; align-items:center; justify-content:space-between;
+  padding:14px 22px; background:var(--bg3);
+  border-bottom:1px solid var(--border);
+  flex-shrink:0;
+}
+
+.trend-modal-title {
+  display:flex; align-items:center; gap:10px;
+  font-size:15px; font-weight:700; color:var(--text);
+}
+.trend-modal-title span { font-size:20px; }
+
+.trend-modal-meta {
+  font-family:var(--mono); font-size:11px;
+  color:var(--cyan); letter-spacing:0.1em; text-transform:uppercase;
+  background:var(--cyan-s); border:1px solid rgba(65,200,245,0.3);
+  border-radius:20px; padding:3px 12px;
+}
+
+.trend-close-btn {
+  display:inline-flex; align-items:center; justify-content:center;
+  width:36px; height:36px; border-radius:9px;
+  background:var(--bg4); border:1.5px solid var(--border2);
+  color:var(--text-sub); font-size:18px; cursor:pointer;
+  transition:background .15s, border-color .15s, color .15s;
+  line-height:1; flex-shrink:0;
+}
+.trend-close-btn:hover {
+  background:var(--red-s); border-color:var(--red); color:var(--red);
+}
+
+.trend-modal-body {
+  flex:1; padding:20px; overflow:hidden;
+  display:flex; flex-direction:column;
+}
+
+.trend-modal-body iframe {
+  width:100%; height:100%; flex:1;
+  border:none; border-radius:10px;
+  background:var(--bg3); display:block;
+}
+
+/*  FARM ZONES  */
+.zones-grid {
+  display:grid;
+  grid-template-columns:repeat(auto-fill,minmax(200px,1fr));
+  gap:14px;
+}
+
+.zone-card {
+  background:var(--bg2); border:1px solid var(--border);
+  border-radius:var(--r); padding:18px 20px;
+  transition:border-color .2s;
+}
+.zone-card:hover { border-color:var(--green); }
+
+.zone-name { font-size:15px; font-weight:700; color:var(--green); margin-bottom:12px; letter-spacing:-0.01em; }
+
+.zone-row {
+  display:flex; justify-content:space-between;
+  font-size:13px; padding:5px 0;
+  border-bottom:1px solid var(--border); color:var(--text-sub);
+}
+.zone-row:last-child { border-bottom:none; }
+.zone-row b { color:var(--text); font-weight:500; }
+
+/*  DITTO SECTION  */
+.ditto-section {
+  margin-top:36px; background:var(--bg2);
+  border:1px dashed var(--border2); border-radius:var(--r-lg); overflow:hidden;
+}
+
+.ditto-header {
+  padding:14px 22px; background:var(--bg3);
+  border-bottom:1px dashed var(--border2);
+  display:flex; align-items:center; gap:10px;
+}
+
+.ditto-header h2 { font-size:14px; font-weight:700; letter-spacing:0.08em; color:var(--amber); }
+
+.ditto-badge {
+  font-size:10px; font-weight:700; letter-spacing:0.1em;
+  background:var(--amber-s); border:1px solid var(--amber);
+  color:var(--amber); border-radius:20px; padding:2px 10px;
+}
+
+.ditto-body {
+  padding:32px 22px; min-height:140px;
+  display:flex; align-items:center; justify-content:center;
+  flex-direction:column; gap:12px;
+  color:var(--text-dim); font-size:14px; text-align:center;
+}
+.ditto-body svg { opacity:0.25; }
+
+/*  FADE-IN  */
+.fi {
+  opacity:0;
+  transform:translateY(14px);
+  animation:fi .42s ease forwards;
+  animation-fill-mode: forwards;
+}
+.fi-1{animation-delay:.04s} .fi-2{animation-delay:.08s} .fi-3{animation-delay:.12s}
+.fi-4{animation-delay:.16s} .fi-5{animation-delay:.20s} .fi-6{animation-delay:.24s}
+.fi-7{animation-delay:.28s}
+@keyframes fi { 0%{opacity:0;transform:translateY(14px)} 100%{opacity:1;transform:translateY(0)} }
+/* Fallback: ensure visibility after max delay */
+.fi-1,.fi-2,.fi-3,.fi-4,.fi-5,.fi-6,.fi-7 { animation-fill-mode:both; }
+
+/*  RESPONSIVE  */
+@media(max-width:1300px){
+  .overview-grid { grid-template-columns:repeat(3,1fr); }
+  .sensor-grid   { grid-template-columns:repeat(4,1fr); }
+}
+@media(max-width:900px){
+  .grafana-panels { grid-template-columns:1fr; }
+  .grafana-pane:first-child { border-right:none; border-bottom:1px solid var(--border); }
+  .diag-row { grid-template-columns:1fr; }
+  .page { padding:20px 16px 60px; }
+  header { padding:0 16px; }
+  .trend-modal { height:70vh; }
+}
+@media(max-width:650px){
+  .overview-grid { grid-template-columns:repeat(2,1fr); }
+  .sensor-grid   { grid-template-columns:repeat(2,1fr); }
+}
+
+::-webkit-scrollbar { width:5px; }
+::-webkit-scrollbar-track { background:var(--bg); }
+::-webkit-scrollbar-thumb { background:var(--bg4); border-radius:3px; }
+</style>
+</head>
+<body>
+
+<!--  HEADER  -->
+<header>
+  <div class="logo">
+    <div class="logo-badge">🌱</div>
+    <div class="logo-text">Smart Farm <em>Digital Twin</em></div>
+  </div>
+  <div class="header-right">
+    <div class="live-pill"><div class="live-dot"></div>LIVE</div>
+    <span class="header-clock" id="clock">--:--:--</span>
+  </div>
+</header>
+
+<div class="page">
+
+  <!--  SYSTEM OVERVIEW  -->
+  <div class="sec-head">
+    <div class="sec-bar"></div>
+    <div class="sec-title">System Overview</div>
+    <div class="sec-line"></div>
+  </div>
+
+  <div class="overview-grid">
+    <div class="ov-card fi fi-1">
+      <div class="ov-label">Health Score</div>
+      <div class="ov-value c-cyan" id="health-value">—</div>
+    </div>
+    <div class="ov-card fi fi-2">
+      <div class="ov-label">Twin Status</div>
+      <div class="ov-value c-green" id="twin-status">—</div>
+    </div>
+    <div class="ov-card fi fi-3">
+      <div class="ov-label">MQTT Broker</div>
+      <div class="ov-value c-green" id="mqtt-status">—</div>
+    </div>
+    <div class="ov-card fi fi-4">
+      <div class="ov-label">InfluxDB</div>
+      <div class="ov-value c-green" id="influx-status">—</div>
+    </div>
+    <div class="ov-card fi fi-5">
+      <div class="ov-label">Data Quality</div>
+      <div class="ov-value c-green" id="quality-status">—</div>
+    </div>
+  </div>
+
+  <!--  SENSOR READINGS  -->
+  <div class="sec-head">
+    <div class="sec-bar"></div>
+    <div class="sec-title">Current Sensor Readings</div>
+    <div class="sec-line"></div>
+  </div>
+
+  <div class="sensor-grid">
+    <div class="sn-card fi fi-1">
+      <span class="sn-icon">💧</span>
+      <div class="sn-label">Moisture</div>
+      <div class="sn-value" id="moisture-value">—</div>
+    </div>
+    <div class="sn-card fi fi-2">
+      <span class="sn-icon">🌡️</span>
+      <div class="sn-label">Temperature</div>
+      <div class="sn-value" id="temperature-value">—</div>
+    </div>
+    <div class="sn-card fi fi-3">
+      <span class="sn-icon">⚗️</span>
+      <div class="sn-label">pH Level</div>
+      <div class="sn-value" id="ph-value">—</div>
+    </div>
+    <div class="sn-card fi fi-4">
+      <span class="sn-icon">⚡</span>
+      <div class="sn-label">EC</div>
+      <div class="sn-value" id="ec-value">—</div>
+    </div>
+    <div class="sn-card fi fi-5">
+      <span class="sn-icon">🧪</span>
+      <div class="sn-label">Nitrogen</div>
+      <div class="sn-value" id="nitrogen-value">—</div>
+    </div>
+    <div class="sn-card fi fi-6">
+      <span class="sn-icon">🔬</span>
+      <div class="sn-label">Phosphorus</div>
+      <div class="sn-value" id="phosphorus-value">—</div>
+    </div>
+    <div class="sn-card fi fi-7">
+      <span class="sn-icon">🌿</span>
+      <div class="sn-label">Potassium</div>
+      <div class="sn-value" id="potassium-value">—</div>
+    </div>
+  </div>
+
+  <!--  DIAGNOSTICS  -->
+  <div class="sec-head">
+    <div class="sec-bar"></div>
+    <div class="sec-title">Diagnostics</div>
+    <div class="sec-line"></div>
+  </div>
+
+  <div class="diag-row">
+
+    <!-- ALERTS CARD -->
+    <div class="diag-card alerts">
+      <div class="diag-header">
+        🚨 Active Alerts
+        <span class="alert-count-badge" id="alert-badge" style="display:none">0</span>
+      </div>
+      <div class="diag-body" id="alert-body">
+        <div class="diag-loading">
+          <span class="spin"></span>Loading alerts…
+        </div>
+      </div>
+    </div>
+
+    <!-- RECOMMENDATIONS CARD -->
+    <div class="diag-card recs">
+      <div class="diag-header">💡 Recommendations</div>
+      <div class="diag-body" id="rec-body">
+        <div class="diag-loading">
+          <span class="spin"></span>Loading recommendations…
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!--  LIVE GRAFANA  -->
+  <div class="monitor-header">
+    <div class="monitor-label">
+      <div class="sec-bar"></div>
+      <div class="sec-title">Live Grafana Monitoring</div>
+    </div>
+    <div class="interval-wrap">
+      <span class="interval-label-text">Time Range</span>
+      <div class="interval-select-wrap">
+        <select class="interval-select" id="interval-select" onchange="onIntervalChange(this.value)">
+          <optgroup label="── Minutes ──">
+            <option value="5m">Last 5 minutes</option>
+            <option value="15m">Last 15 minutes</option>
+            <option value="30m">Last 30 minutes</option>
+          </optgroup>
+          <optgroup label="── Hours ──">
+            <option value="1h">Last 1 hour</option>
+            <option value="3h">Last 3 hours</option>
+            <option value="6h" selected>Last 6 hours</option>
+            <option value="12h">Last 12 hours</option>
+            <option value="24h">Last 24 hours</option>
+          </optgroup>
+          <optgroup label="── Days ──">
+            <option value="2d">Last 2 days</option>
+            <option value="7d">Last 7 days</option>
+            <option value="30d">Last 30 days</option>
+            <option value="90d">Last 90 days</option>
+          </optgroup>
+          <optgroup label="── Longer ──">
+            <option value="6M">Last 6 months</option>
+            <option value="1y">Last 1 year</option>
+            <option value="2y">Last 2 years</option>
+            <option value="5y">Last 5 years</option>
+          </optgroup>
+        </select>
+        <span class="select-arrow">▾</span>
+      </div>
+    </div>
+  </div>
+
+  <!--  Moisture  -->
+  <div class="grafana-block fi fi-1">
+    <div class="grafana-block-header"><span>💧</span><h3>Soil Moisture</h3></div>
+    <div class="grafana-panels">
+      <div class="grafana-pane">
+        <div class="grafana-pane-top">
+          <div class="grafana-pane-label">Gauge</div>
+        </div>
+        <iframe id="g-moisture-gauge" src="" data-panel="panel-1"></iframe>
+      </div>
+      <div class="grafana-pane">
+        <div class="grafana-pane-top">
+          <div class="grafana-pane-label">Trend</div>
+          <button class="maximize-btn" onclick="openTrend('g-moisture-trend','💧 Soil Moisture — Trend')">
+            <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M1 4V1h3M8 1h3v3M11 8v3H8M4 11H1V8"/></svg>
+            Maximize
+          </button>
+        </div>
+        <iframe id="g-moisture-trend" src="" data-panel="panel-8"></iframe>
+      </div>
+    </div>
+  </div>
+
+  <!--  pH  -->
+  <div class="grafana-block fi fi-2">
+    <div class="grafana-block-header"><span>⚗️</span><h3>Soil pH</h3></div>
+    <div class="grafana-panels">
+      <div class="grafana-pane">
+        <div class="grafana-pane-top">
+          <div class="grafana-pane-label">Gauge</div>
+        </div>
+        <iframe id="g-ph-gauge" src="" data-panel="panel-3"></iframe>
+      </div>
+      <div class="grafana-pane">
+        <div class="grafana-pane-top">
+          <div class="grafana-pane-label">Trend</div>
+          <button class="maximize-btn" onclick="openTrend('g-ph-trend','⚗️ Soil pH — Trend')">
+            <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M1 4V1h3M8 1h3v3M11 8v3H8M4 11H1V8"/></svg>
+            Maximize
+          </button>
+        </div>
+        <iframe id="g-ph-trend" src="" data-panel="panel-9"></iframe>
+      </div>
+    </div>
+  </div>
+
+  <!--  Temperature  -->
+  <div class="grafana-block fi fi-3">
+    <div class="grafana-block-header"><span>🌡️</span><h3>Soil Temperature</h3></div>
+    <div class="grafana-panels">
+      <div class="grafana-pane">
+        <div class="grafana-pane-top">
+          <div class="grafana-pane-label">Gauge</div>
+        </div>
+        <iframe id="g-temp-gauge" src="" data-panel="panel-2"></iframe>
+      </div>
+      <div class="grafana-pane">
+        <div class="grafana-pane-top">
+          <div class="grafana-pane-label">Trend</div>
+          <button class="maximize-btn" onclick="openTrend('g-temp-trend','🌡️ Soil Temperature — Trend')">
+            <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M1 4V1h3M8 1h3v3M11 8v3H8M4 11H1V8"/></svg>
+            Maximize
+          </button>
+        </div>
+        <iframe id="g-temp-trend" src="" data-panel="panel-10"></iframe>
+      </div>
+    </div>
+  </div>
+
+  <!--  EC  -->
+  <div class="grafana-block fi fi-4">
+    <div class="grafana-block-header"><span>⚡</span><h3>Soil Electrical Conductivity</h3></div>
+    <div class="grafana-panels">
+      <div class="grafana-pane">
+        <div class="grafana-pane-top">
+          <div class="grafana-pane-label">Gauge</div>
+        </div>
+        <iframe id="g-ec-gauge" src="" data-panel="panel-7"></iframe>
+      </div>
+      <div class="grafana-pane">
+        <div class="grafana-pane-top">
+          <div class="grafana-pane-label">Trend</div>
+          <button class="maximize-btn" onclick="openTrend('g-ec-trend','⚡ Soil EC — Trend')">
+            <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M1 4V1h3M8 1h3v3M11 8v3H8M4 11H1V8"/></svg>
+            Maximize
+          </button>
+        </div>
+        <iframe id="g-ec-trend" src="" data-panel="panel-11"></iframe>
+      </div>
+    </div>
+  </div>
+
+  <!--  Nitrogen  -->
+  <div class="grafana-block fi fi-5">
+    <div class="grafana-block-header"><span>🧪</span><h3>Soil Nitrogen</h3></div>
+    <div class="grafana-panels">
+      <div class="grafana-pane">
+        <div class="grafana-pane-top">
+          <div class="grafana-pane-label">Gauge</div>
+        </div>
+        <iframe id="g-n-gauge" src="" data-panel="panel-6"></iframe>
+      </div>
+      <div class="grafana-pane">
+        <div class="grafana-pane-top">
+          <div class="grafana-pane-label">Trend</div>
+          <button class="maximize-btn" onclick="openTrend('g-n-trend','🧪 Soil Nitrogen — Trend')">
+            <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M1 4V1h3M8 1h3v3M11 8v3H8M4 11H1V8"/></svg>
+            Maximize
+          </button>
+        </div>
+        <iframe id="g-n-trend" src="" data-panel="panel-12"></iframe>
+      </div>
+    </div>
+  </div>
+
+  <!--  Phosphorus  -->
+  <div class="grafana-block fi fi-6">
+    <div class="grafana-block-header"><span>🔬</span><h3>Soil Phosphorus</h3></div>
+    <div class="grafana-panels">
+      <div class="grafana-pane">
+        <div class="grafana-pane-top">
+          <div class="grafana-pane-label">Gauge</div>
+        </div>
+        <iframe id="g-p-gauge" src="" data-panel="panel-5"></iframe>
+      </div>
+      <div class="grafana-pane">
+        <div class="grafana-pane-top">
+          <div class="grafana-pane-label">Trend</div>
+          <button class="maximize-btn" onclick="openTrend('g-p-trend','🔬 Soil Phosphorus — Trend')">
+            <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M1 4V1h3M8 1h3v3M11 8v3H8M4 11H1V8"/></svg>
+            Maximize
+          </button>
+        </div>
+        <iframe id="g-p-trend" src="" data-panel="panel-13"></iframe>
+      </div>
+    </div>
+  </div>
+
+  <!--  Potassium  -->
+  <div class="grafana-block fi fi-7">
+    <div class="grafana-block-header"><span>🌿</span><h3>Soil Potassium</h3></div>
+    <div class="grafana-panels">
+      <div class="grafana-pane">
+        <div class="grafana-pane-top">
+          <div class="grafana-pane-label">Gauge</div>
+        </div>
+        <iframe id="g-k-gauge" src="" data-panel="panel-4"></iframe>
+      </div>
+      <div class="grafana-pane">
+        <div class="grafana-pane-top">
+          <div class="grafana-pane-label">Trend</div>
+          <button class="maximize-btn" onclick="openTrend('g-k-trend','🌿 Soil Potassium — Trend')">
+            <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M1 4V1h3M8 1h3v3M11 8v3H8M4 11H1V8"/></svg>
+            Maximize
+          </button>
+        </div>
+        <iframe id="g-k-trend" src="" data-panel="panel-14"></iframe>
+      </div>
+    </div>
+  </div>
+
+  <!--  FARM ZONES  -->
+  <div class="sec-head">
+    <div class="sec-bar"></div>
+    <div class="sec-title">Farm Zones</div>
+    <div class="sec-line"></div>
+  </div>
+
+  <div class="zones-grid" id="zones-grid">
+    <!-- Populated by JS from /farm/twin -->
+    <div class="zone-card fi fi-1">
+      <div class="zone-name">Loading…</div>
+    </div>
+  </div>
+
+  <!--  DITTO SCENARIO CONTROL  -->
+  <div class="sec-head" style="margin-top:40px;">
+    <div class="sec-bar" style="background:var(--amber);box-shadow:0 0 10px rgba(255,189,69,0.4);"></div>
+    <div class="sec-title" style="color:var(--amber);">Ditto Scenario Control</div>
+    <div class="sec-line"></div>
+  </div>
+
+  <div class="ditto-section">
+    <div class="ditto-header">
+      <span style="font-size:20px;">🔮</span>
+      <h2>Eclipse Ditto — Digital Twin Scenarios</h2>
+      <span class="ditto-badge">COMING SOON</span>
+    </div>
+    <div class="ditto-body">
+      <svg width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect x="4" y="4" width="40" height="40" rx="8" stroke="currentColor" stroke-width="2"/>
+        <path d="M16 24h16M24 16v16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+      </svg>
+      <p style="color:var(--text-sub);font-size:15px;font-weight:500;">
+        Scenario injection panel — Flood, Drought, Pest, Frost and more
+      </p>
+      <p style="color:var(--text-dim);font-size:13px;">
+        Connect Eclipse Ditto to inject scenarios and control actuators from this panel
+      </p>
+    </div>
+  </div>
+
+</div><!-- /page -->
+
+<!--  TREND MAXIMIZE MODAL  -->
+<div class="trend-modal-overlay" id="trend-modal-overlay" onclick="overlayClick(event)">
+  <div class="trend-modal">
+    <div class="trend-modal-header">
+      <div class="trend-modal-title">
+        <span id="modal-icon">📈</span>
+        <span id="modal-title">Trend</span>
+        <span class="trend-modal-meta" id="modal-range">6h</span>
+      </div>
+      <button class="trend-close-btn" onclick="closeTrend()" title="Close (Esc)">✕</button>
+    </div>
+    <div class="trend-modal-body">
+      <iframe id="modal-iframe" src=""></iframe>
+    </div>
+  </div>
+</div>
+
+<script>
+//  Clock 
+(function tick() {
+  document.getElementById('clock').textContent =
+    new Date().toTimeString().slice(0, 8);
+  setTimeout(tick, 1000);
+})();
+
+//  Grafana iframes 
+// const GRAFANA_BASE = 'http://localhost:3000/d-solo/adnjshl/dashboard-graph-view';
+//to access web page from any device with same wifi connection
+const GRAFANA_BASE = 'http://10.23.29.71:3000/d-solo/adnjshl/dashboard-graph-view';
+
+
+const IFRAMES = [
+  ['g-moisture-gauge','panel-1'], ['g-moisture-trend','panel-8'],
+  ['g-ph-gauge',      'panel-3'], ['g-ph-trend',      'panel-9'],
+  ['g-temp-gauge',    'panel-2'], ['g-temp-trend',     'panel-10'],
+  ['g-ec-gauge',      'panel-7'], ['g-ec-trend',       'panel-11'],
+  ['g-n-gauge',       'panel-6'], ['g-n-trend',        'panel-12'],
+  ['g-p-gauge',       'panel-5'], ['g-p-trend',        'panel-13'],
+  ['g-k-gauge',       'panel-4'], ['g-k-trend',        'panel-14'],
+];
+
+function toMs(key) {
+  const n = parseInt(key);
+  if (key.endsWith('m')) return n * 60 * 1000;
+  if (key.endsWith('h')) return n * 3600 * 1000;
+  if (key.endsWith('d')) return n * 86400 * 1000;
+  if (key.endsWith('M')) return n * 30 * 86400 * 1000;
+  if (key.endsWith('y')) return n * 365 * 86400 * 1000;
+  return 6 * 3600 * 1000;
+}
+
+let currentKey = '6h';
+
+function buildUrl(panelId, key) {
+  const to   = Date.now();
+  const from = to - toMs(key);
+  return `${GRAFANA_BASE}?orgId=1&timezone=browser&refresh=auto&from=${from}&to=${to}&panelId=${panelId}`;
+}
+
+function refreshAll(key) {
+  IFRAMES.forEach(([id, panel]) => {
+    const el = document.getElementById(id);
+    if (el) el.src = buildUrl(panel, key);
+  });
+  // Also refresh modal if open
+  const overlay = document.getElementById('trend-modal-overlay');
+  if (overlay.classList.contains('open')) {
+    const mIframe = document.getElementById('modal-iframe');
+    const mPanel  = mIframe.dataset.panel;
+    if (mPanel) mIframe.src = buildUrl(mPanel, key);
+    document.getElementById('modal-range').textContent = key;
+  }
+}
+
+function onIntervalChange(key) {
+  currentKey = key;
+  refreshAll(key);
+}
+
+refreshAll(currentKey);
+setInterval(() => refreshAll(currentKey), 5 * 60 * 1000);
+
+//  Trend Maximize Modal 
+function openTrend(iframeId, title) {
+  const srcEl    = document.getElementById(iframeId);
+  const panel    = srcEl ? srcEl.getAttribute('data-panel') : null;
+  const url      = panel ? buildUrl(panel, currentKey) : (srcEl ? srcEl.src : '');
+
+  // Derive emoji and clean title
+  const parts    = title.split(' ');
+  const icon     = parts[0];
+  const cleanTitle = parts.slice(1).join(' ');
+
+  document.getElementById('modal-icon').textContent  = icon;
+  document.getElementById('modal-title').textContent = cleanTitle;
+  document.getElementById('modal-range').textContent = currentKey;
+
+  const mIframe  = document.getElementById('modal-iframe');
+  mIframe.dataset.panel = panel || '';
+  mIframe.src    = url;
+
+  document.getElementById('trend-modal-overlay').classList.add('open');
+  document.body.style.overflow = 'hidden';
+}
+
+function closeTrend() {
+  document.getElementById('trend-modal-overlay').classList.remove('open');
+  document.body.style.overflow = '';
+  // Clear iframe after transition to stop network traffic
+  setTimeout(() => {
+    document.getElementById('modal-iframe').src = '';
+  }, 250);
+}
+
+function overlayClick(e) {
+  if (e.target === document.getElementById('trend-modal-overlay')) closeTrend();
+}
+
+// ESC key to close
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') closeTrend();
+});
+
+//  Sensor + Alerts + Recommendations polling 
+
+function setVal(id, val) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const str = String(val ?? '—');
+  if (el.textContent !== str) {
+    el.textContent = str;
+    el.style.transition = 'color 0s';
+    el.style.color = '#ffffff';
+    setTimeout(() => { el.style.transition = 'color 0.6s'; el.style.color = ''; }, 80);
+  }
+}
+
+//  FIX: renderAlerts  driven 100% by JS fetch, no Jinja2 dependency 
+function renderAlerts(alerts) {
+  const body  = document.getElementById('alert-body');
+  const badge = document.getElementById('alert-badge');
+  if (!body) return;
+
+  if (!alerts || alerts.length === 0) {
+    body.innerHTML = '<div class="diag-item"><span class="diag-arrow">›</span>No active alerts — all systems nominal</div>';
+    if (badge) badge.style.display = 'none';
+  } else {
+    body.innerHTML = alerts.map(a =>
+      `<div class="diag-item is-alert"><span class="diag-arrow">›</span>${a}</div>`
+    ).join('');
+    if (badge) {
+      badge.textContent = alerts.length;
+      badge.style.display = 'inline';
+    }
+  }
+}
+
+//  FIX: renderRecs  driven 100% by JS fetch, no Jinja2 dependency       
+function renderRecs(recs) {
+  const body = document.getElementById('rec-body');
+  if (!body) return;
+
+  if (!recs || recs.length === 0) {
+    body.innerHTML = '<div class="diag-item"><span class="diag-arrow">›</span>No recommendations at this time</div>';
+  } else {
+    body.innerHTML = recs.map(r =>
+      `<div class="diag-item is-rec"><span class="diag-arrow">›</span>${r}</div>`
+    ).join('');
+  }
+}
+
+//  Render zones 
+function renderZones(zones) {
+  const grid = document.getElementById('zones-grid');
+  if (!grid || !zones || zones.length === 0) return;
+  grid.innerHTML = zones.map((z, i) => `
+    <div class="zone-card fi fi-${(i%7)+1}">
+      <div class="zone-name">${z.name || '—'}</div>
+      <div class="zone-row"><span>Crop</span><b>${z.crop || '—'}</b></div>
+      <div class="zone-row"><span>Area</span><b>${z.area_m2 != null ? z.area_m2 + ' m²' : '—'}</b></div>
+    </div>
+  `).join('');
+}
+
+//  Main polling function 
+async function updateTwin() {
+  try {
+    const res  = await fetch('/farm/twin');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const twin = await res.json();
+
+    // Overview
+    setVal('health-value',   twin.health_score);
+    setVal('twin-status',    twin.twin?.status);
+    setVal('mqtt-status',    twin.system?.mqtt);
+    setVal('influx-status',  twin.system?.influxdb);
+    setVal('quality-status', twin.data_quality?.status);
+
+    // Sensors
+    setVal('moisture-value',    twin.sensors?.moisture);
+    setVal('temperature-value', twin.sensors?.temperature);
+    setVal('ph-value',          twin.sensors?.ph);
+    setVal('ec-value',          twin.sensors?.ec);
+    setVal('nitrogen-value',    twin.sensors?.nitrogen);
+    setVal('phosphorus-value',  twin.sensors?.phosphorus);
+    setVal('potassium-value',   twin.sensors?.potassium);
+
+    //  ALERTS: pulled directly from twin.alerts array 
+    renderAlerts(twin.alerts);
+
+    //  RECOMMENDATIONS: pulled directly from twin.recommendations array 
+    renderRecs(twin.recommendations);
+
+    //  Zones 
+    if (twin.zones) renderZones(twin.zones);
+
+  } catch(e) {
+    console.warn('Twin update failed:', e);
+    // Show error state in diagnostics if still showing loading spinner
+    const alertBody = document.getElementById('alert-body');
+    const recBody   = document.getElementById('rec-body');
+    if (alertBody && alertBody.querySelector('.diag-loading')) {
+      alertBody.innerHTML = '<div class="diag-item"><span class="diag-arrow" style="color:var(--amber)">›</span>Could not reach /farm/twin — check backend</div>';
+    }
+    if (recBody && recBody.querySelector('.diag-loading')) {
+      recBody.innerHTML = '<div class="diag-item"><span class="diag-arrow" style="color:var(--amber)">›</span>Could not reach /farm/twin — check backend</div>';
+    }
+  }
+}
+
+// Run immediately, then every 5s
+updateTwin();
+setInterval(updateTwin, 5000);
+</script>
+</body>
+</html>
