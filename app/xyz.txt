@@ -1,1592 +1,3794 @@
-<!-- <!DOCTYPE html>
-<html>
-<head>
-    <title>Shri Timli Digital Twin</title>
+main.py ditto_writer.py 
 
-    <style>
 
-        body {
-            font-family: Arial, sans-serif;
-            margin: 30px;
+
+```python
+
+import requests
+
+from requests.auth import HTTPBasicAuth
+
+
+
+from app.history_service import save_virtual_change, save_actual_override
+
+from app.ditto_reader import LEGACY_THING_ID, get_virtual, get_actual, thing_exists
+
+
+
+DITTO_BASE_URL = "http://localhost:8080/api/2/things"
+
+AUTH = HTTPBasicAuth("ditto", "ditto")
+
+MERGE_HEADERS = {"Content-Type": "application/merge-patch+json"}
+
+
+
+
+
+def create_thing(thing_id: str, name: str, field: str = None, crop: str = None):
+
+
+
+    payload = {
+
+        "attributes": {
+
+            "type": "farm",
+
+            "name": name,
+
+            "field": field,
+
+            "crop": crop
+
+        },
+
+        "features": {
+
+            "actual": {"properties": {}},
+
+            "virtual": {"properties": {}}
+
         }
 
-        h1 {
-            color: green;
-        }
-
-        table {
-            border-collapse: collapse;
-            width: 100%;
-            margin-bottom: 30px;
-        }
-
-        th, td {
-            border: 1px solid #cccccc;
-            padding: 10px;
-            text-align: left;
-        }
-
-        th {
-            background-color: #eeeeee;
-        }
-
-        input {
-            width: 120px;
-            padding: 5px;
-        }
-
-        button {
-            padding: 5px 10px;
-            cursor: pointer;
-        }
-
-        .actual {
-            background-color: #f8fff8;
-        }
-
-        .virtual {
-            background-color: #fffdf5;
-        }
-
-    </style>
-</head>
-
-<body>
-
-    <h1>Shri Timli Farm Digital Twin</h1>
-
-    <h2>Actual Sensor Data (Live)</h2>
-
-    <table id="actualTable" class="actual">
-    </table>
-
-    <h2>Virtual Data </h2>
-
-    <table id="virtualTable" class="virtual">
-    </table>
-
-<script>
-
-async function loadActual() {
-
-    try {
-
-        const response =
-            await fetch("/farm/actual");
-
-        const data =
-            await response.json();
-
-        let html =
-            "<tr><th>Property</th><th>Value</th></tr>";
-
-        for (const key in data) {
-
-            html += `
-            <tr>
-                <td>${key}</td>
-                <td>${data[key]}</td>
-            </tr>
-            `;
-        }
-
-        document.getElementById(
-            "actualTable"
-        ).innerHTML = html;
-
-    } catch(error) {
-
-        console.error(error);
     }
-}
 
 
 
-async function loadVirtual() {
+    response = requests.put(
 
-    try {
+        f"{DITTO_BASE_URL}/{thing_id}",
 
-        const response =
-            await fetch("/farm/virtual");
+        auth=AUTH,
 
-        const data =
-            await response.json();
+        json=payload
 
-        let html =
-            "<tr><th>Property</th><th>Current Value</th><th>New Value</th><th>Action</th></tr>";
+    )
 
-        for (const key in data) {
 
-            html += `
-            <tr>
 
-                <td>${key}</td>
+    response.raise_for_status()
 
-                <td>${data[key]}</td>
 
-                <td>
 
-                    <input
-                        id="input_${key}"
-                        value="${data[key]}"
-                    >
+    return response.json()
 
-                </td>
 
-                <td>
 
-                    <button
-                        onclick="saveVirtual('${key}')">
 
-                        Save
 
-                    </button>
+def ensure_thing(thing_id: str, name: str = None, field: str = None, crop: str = None):
 
-                </td>
+    """
 
-            </tr>
-            `;
-        }
+    Auto-provisions the Ditto thing the first time a farm_id shows up,
 
-        document.getElementById(
-            "virtualTable"
-        ).innerHTML = html;
+    since the dashboard never calls an explicit create-farm route.
 
-    } catch(error) {
+    """
 
-        console.error(error);
+    if not thing_exists(thing_id):
+
+        create_thing(thing_id, name or thing_id, field, crop)
+
+
+
+
+
+def update_virtual_properties(properties: dict, thing_id: str = LEGACY_THING_ID):
+
+
+
+    ensure_thing(thing_id)
+
+
+
+    current = get_virtual(thing_id)
+
+
+
+    response = requests.patch(
+
+        f"{DITTO_BASE_URL}/{thing_id}/features/virtual/properties",
+
+        auth=AUTH,
+
+        json=properties,
+
+        headers=MERGE_HEADERS
+
+    )
+
+
+
+    response.raise_for_status()
+
+
+
+    changes = {}
+
+
+
+    for name, value in properties.items():
+
+        old_value = current.get(name)
+
+        save_virtual_change(name, old_value, value, thing_id=thing_id)
+
+        changes[name] = {"oldValue": old_value, "value": value}
+
+
+
+    return {
+
+        "status": "success",
+
+        "changes": changes
+
     }
-}
 
 
 
-async function saveVirtual(property) {
 
-    const value =
-        document.getElementById(
-            "input_" + property
-        ).value;
 
-    try {
+def update_actual_properties(properties: dict, thing_id: str = LEGACY_THING_ID):
 
-        const response =
-            await fetch(
-                "/farm/virtual",
-                {
-                    method: "POST",
 
-                    headers: {
-                        "Content-Type":
-                        "application/json"
-                    },
 
-                    body: JSON.stringify({
+    ensure_thing(thing_id)
 
-                        property: property,
 
-                        value: isNaN(value)
-                            ? value
-                            : Number(value)
 
-                    })
-                }
-            );
+    current = get_actual(thing_id)
 
-        const result =
-            await response.json();
 
-        console.log(result);
 
-        loadVirtual();
+    response = requests.patch(
 
-    } catch(error) {
+        f"{DITTO_BASE_URL}/{thing_id}/features/actual/properties",
 
-        console.error(error);
+        auth=AUTH,
+
+        json=properties,
+
+        headers=MERGE_HEADERS
+
+    )
+
+
+
+    response.raise_for_status()
+
+
+
+    changes = {}
+
+
+
+    for name, value in properties.items():
+
+        old_value = current.get(name)
+
+        save_actual_override(name, old_value, value, thing_id=thing_id)
+
+        changes[name] = {"oldValue": old_value, "value": value}
+
+
+
+    return {
+
+        "status": "success",
+
+        "changes": changes
+
     }
-}
+
+```
 
 
 
-loadActual();
-
-loadVirtual();
-
-
-
-setInterval(
-    loadActual,
-    3000
-);
-
-</script>
-
-</body>
-</html> -->
+ditto_reader.py 
 
 
 
 
+import requests
+
+from requests.auth import HTTPBasicAuth
 
 
-<!DOCTYPE html>
+
+DITTO_BASE_URL = "http://localhost:8080/api/2/things"
+
+LEGACY_THING_ID = "smartfarm:twin01"
+
+
+
+AUTH = HTTPBasicAuth("ditto", "ditto")
+
+
+
+
+
+def thing_id_for_farm(farm_id: str) -> str:
+
+    if not farm_id or farm_id == "legacy":
+
+        return LEGACY_THING_ID
+
+    return f"smartfarm:{farm_id}"
+
+
+
+
+
+def thing_exists(thing_id: str) -> bool:
+
+    response = requests.get(f"{DITTO_BASE_URL}/{thing_id}", auth=AUTH)
+
+    return response.status_code == 200
+
+
+
+
+
+def get_twin(thing_id: str = LEGACY_THING_ID):
+
+    response = requests.get(f"{DITTO_BASE_URL}/{thing_id}", auth=AUTH)
+
+    response.raise_for_status()
+
+    return response.json()
+
+
+
+
+
+def get_actual(thing_id: str = LEGACY_THING_ID):
+
+    return get_twin(thing_id).get("features", {}).get("actual", {}).get("properties", {})
+
+
+
+
+
+def get_virtual(thing_id: str = LEGACY_THING_ID):
+
+    return get_twin(thing_id).get("features", {}).get("virtual", {}).get("properties", {})
+
+
+
+
+
+def get_attributes(thing_id: str = LEGACY_THING_ID):
+
+    return get_twin(thing_id).get("attributes", {})
+
+```
+
+
+
+ditto_service.py 
+
+
+
+```python
+
+import requests
+
+from requests.auth import HTTPBasicAuth
+
+
+
+DITTO_BASE_URL = "http://localhost:8080/api/2/things"
+
+AUTH = HTTPBasicAuth("ditto", "ditto")
+
+MERGE_HEADERS = {"Content-Type": "application/merge-patch+json"}
+
+
+
+
+
+def update_ditto(sensor_data: dict, farm_id: str = "twin01"):
+
+    """sensor_data can contain any keys — adding a sensor on the ESP32/
+
+    Modbus side just means a new key shows up here, no code change needed."""
+
+    thing_id = f"smartfarm:{farm_id}"
+
+
+
+    requests.patch(
+
+        f"{DITTO_BASE_URL}/{thing_id}/features/actual/properties",
+
+        auth=AUTH, json=sensor_data, headers=MERGE_HEADERS,
+
+    )
+
+```
+
+
+
+farm_registry.py 
+
+
+
+```python
+
+import re
+
+import requests
+
+from requests.auth import HTTPBasicAuth
+
+
+
+from app.ditto_writer import create_thing
+
+
+
+DITTO_SEARCH_URL = "http://localhost:8080/api/2/search/things"
+
+AUTH = HTTPBasicAuth("ditto", "ditto")
+
+
+
+FARM_ID_PATTERN = re.compile(r"^smartfarm:farm(\d+)$")
+
+
+
+
+
+def list_farm_thing_ids():
+
+    response = requests.get(
+
+        DITTO_SEARCH_URL,
+
+        auth=AUTH,
+
+        params={"filter": 'eq(attributes/type,"farm")'},
+
+    )
+
+    response.raise_for_status()
+
+    return [item["thingId"] for item in response.json().get("items", [])]
+
+
+
+
+
+def next_farm_id() -> str:
+
+    used = []
+
+    for thing_id in list_farm_thing_ids():
+
+        match = FARM_ID_PATTERN.match(thing_id)
+
+        if match:
+
+            used.append(int(match.group(1)))
+
+    next_number = (max(used) + 1) if used else 1
+
+    return f"farm{next_number:02d}"
+
+
+
+
+
+def create_farm(name: str, field: str = None, crop: str = None):
+
+    farm_id = next_farm_id()
+
+    thing_id = f"smartfarm:{farm_id}"
+
+    create_thing(thing_id, name, field, crop)
+
+    return {"farm_id": farm_id, "thing_id": thing_id, "name": name}
+
+```
+
+
+
+history_logger.py 
+
+
+
+```python
+
+import time
+
+
+
+from app.ditto_reader import get_actual
+
+from app.farm_registry import list_farm_thing_ids
+
+from app.history_service import save_actual_sensor_history
+
+
+
+
+
+def start_history_logger():
+
+
+
+    while True:
+
+
+
+        try:
+
+            thing_ids = list_farm_thing_ids()
+
+        except Exception as e:
+
+            print("could not list farms:", e)
+
+            thing_ids = []
+
+
+
+        for thing_id in thing_ids:
+
+
+
+            try:
+
+                actual = get_actual(thing_id)
+
+                save_actual_sensor_history(actual, thing_id=thing_id)
+
+                print(f"history saved: {thing_id}")
+
+
+
+            except Exception as e:
+
+                print(f"history logger error ({thing_id}):", e)
+
+
+
+        time.sleep(30)
+
+```
+
+
+
+history_reader.py 
+
+
+
+```python
+
+from app.mongodb_service import actual_sensor_history
+
+
+
+
+
+def get_actual_history(thing_id="smartfarm:twin01", limit=100):
+
+
+
+    cursor = (
+
+        actual_sensor_history
+
+        .find({"thingId": thing_id}, {"_id": 0})
+
+        .sort("timestamp", -1)
+
+        .limit(limit)
+
+    )
+
+
+
+    return list(cursor)
+
+
+
+```
+
+
+
+history_service.py 
+
+
+
+```python
+
+from datetime import datetime
+
+
+
+from app.mongodb_service import (
+
+    actual_sensor_history,
+
+    actual_override_history,
+
+    virtual_history
+
+)
+
+
+
+
+
+def save_actual_sensor_history(data, thing_id="smartfarm:twin01"):
+
+
+
+    document = {
+
+        "timestamp": datetime.utcnow(),
+
+        "thingId": thing_id,
+
+        **data
+
+    }
+
+
+
+    actual_sensor_history.insert_one(document)
+
+
+
+
+
+def save_actual_override(
+
+    property_name,
+
+    before_state,
+
+    after_state,
+
+    thing_id="smartfarm:twin01"
+
+):
+
+
+
+    document = {
+
+        "timestamp": datetime.utcnow(),
+
+        "thingId": thing_id,
+
+        "overrideProperty": property_name,
+
+        "before": before_state,
+
+        "after": after_state,
+
+        "source": "dashboard"
+
+    }
+
+
+
+    actual_override_history.insert_one(document)
+
+
+
+
+
+def save_virtual_change(
+
+    property_name,
+
+    before_state,
+
+    after_state,
+
+    thing_id="smartfarm:twin01"
+
+):
+
+
+
+    document = {
+
+        "timestamp": datetime.utcnow(),
+
+        "thingId": thing_id,
+
+        "changedProperty": property_name,
+
+        "before": before_state,
+
+        "after": after_state,
+
+        "source": "dashboard"
+
+    }
+
+
+
+    virtual_history.insert_one(document)
+
+```
+
+
+
+mongodb_service.py 
+
+
+
+```python
+
+from pymongo import MongoClient
+
+
+
+client = MongoClient("mongodb://localhost:27017")
+
+
+
+db = client["smart_farm"]
+
+
+
+actual_sensor_history = db["actual_sensor_history"]
+
+actual_override_history = db["actual_override_history"]
+
+virtual_history = db["virtual_history"]
+
+```
+
+
+
+dashboard.html i have given u all my file of project . problem 1 when i create a farm on dashboard add sensor then farm got created bcz i can see new farm_bdehg in ditto ui but as soon as i refresh web page farm name gone o web page , but ditto has still it. problem 2 virtual sensor an be seen in ditto ui but actual sensor of newly created is not shown eg { "thingId": "smartfarm:farm_btiawyi", "policyId": "smartfarm:farm_btiawyi", "attributes": { "name": "smartfarm:farm_btiawyi", "field": null, "crop": null }, "features": { "actual": { "properties": {} }, "virtual": { "properties": { "humidity": 96, "airTemperature": 42.1, "rainfall": 78.2, "windSpeed": 34.2, "solarRadiation": 107, "sunlightHours": 286, "uvIndex": 9.8, "co2": 819, "plantHeight": 1752, "canopyCoverage": 79, "rootDepth": 55, "irrigationRate": 73.1, "irrigationDuration": 17, "soilOrganicMatter": 9.71, "soilSalinity": 3.8, "soilCompaction": 39.2, "calcium": 20, "magnesium": 29, "sulfur": 20, "zinc": 17.6, "boron": 1.26, "iron": 27, "copper": 4.9, "manganese": 11.2, "diseaseRisk": 66, "pestRisk": 87, "ndvi": 0.15, "evi": 0, "ndwi": -0.67, "floodRisk": 50, "droughtRisk": 3 } } } } .. i want web page to show all things present in ditto .. so look whats wrong .. also actual data come from sensor of legacy farm (user will have freedom to show his own sensor in actual as well )       from fastapi import FastAPI
+
+from fastapi.responses import FileResponse
+
+from pydantic import BaseModel
+
+from typing import Optional
+
+import threading
+
+
+
+from app.history_reader import get_actual_history
+
+from app.history_logger import start_history_logger
+
+
+
+from app.ditto_reader import (
+
+    LEGACY_THING_ID,
+
+    thing_id_for_farm,
+
+    get_twin,
+
+    get_actual,
+
+    get_virtual,
+
+    get_attributes
+
+)
+
+
+
+from app.ditto_writer import (
+
+    update_virtual_properties,
+
+    update_actual_properties
+
+)
+
+
+
+from app.farm_registry import (
+
+    create_farm as create_farm_thing,
+
+    list_farm_thing_ids
+
+)
+
+
+
+app = FastAPI(
+
+    title="Smart Farm Digital Twin",
+
+    version="2.1.0"
+
+)
+
+
+
+
+
+@app.on_event("startup")
+
+def startup():
+
+
+
+    thread = threading.Thread(
+
+        target=start_history_logger,
+
+        daemon=True
+
+    )
+
+
+
+    thread.start()
+
+
+
+    print("History Logger Started")
+
+
+
+
+
+# models
+
+
+
+class FarmCreate(BaseModel):
+
+    name: str
+
+    field: Optional[str] = None
+
+    crop: Optional[str] = None
+
+
+
+
+
+# basic endpoints
+
+
+
+@app.get("/")
+
+def root():
+
+    return {
+
+        "project": "Smart Farm Digital Twin",
+
+        "architecture": "Ditto First",
+
+        "status": "running"
+
+    }
+
+
+
+
+
+@app.get("/health")
+
+def health():
+
+    return {
+
+        "backend": "healthy",
+
+        "source": "Eclipse Ditto"
+
+    }
+
+
+
+
+
+# ---- farm management ----
+
+
+
+@app.post("/farms")
+
+def create_farm(payload: FarmCreate):
+
+    return create_farm_thing(payload.name, payload.field, payload.crop)
+
+
+
+
+
+@app.get("/farms")
+
+def list_farms():
+
+    farms = []
+
+    for thing_id in list_farm_thing_ids():
+
+        if thing_id == LEGACY_THING_ID:
+
+            continue
+
+        farm_id = thing_id.split(":", 1)[1]
+
+        try:
+
+            attrs = get_attributes(thing_id)
+
+        except Exception:
+
+            attrs = {}
+
+        farms.append({
+
+            "farm_id": farm_id,
+
+            "thing_id": thing_id,
+
+            "name": attrs.get("name", farm_id),
+
+            "field": attrs.get("field"),
+
+            "crop": attrs.get("crop"),
+
+        })
+
+    return {"farms": farms}
+
+
+
+
+
+# ---- legacy (Farm 1 / twin01) ----
+
+
+
+@app.get("/farm/twin")
+
+def farm_twin():
+
+    return get_twin()
+
+
+
+
+
+@app.get("/farm/digital-twin")
+
+def digital_twin():
+
+    return {
+
+        "attributes": get_attributes(),
+
+        "actual": get_actual(),
+
+        "virtual": get_virtual()
+
+    }
+
+
+
+
+
+@app.get("/farm/attributes")
+
+def attributes():
+
+    return get_attributes()
+
+
+
+
+
+@app.get("/farm/actual")
+
+def actual():
+
+    return get_actual()
+
+
+
+
+
+@app.get("/farm/virtual")
+
+def virtual():
+
+    return get_virtual()
+
+
+
+
+
+@app.post("/farm/virtual")
+
+def update_virtual(properties: dict):
+
+    return update_virtual_properties(properties)
+
+
+
+
+
+@app.post("/farm/actual")
+
+def update_actual(properties: dict):
+
+    return update_actual_properties(properties)
+
+
+
+
+
+@app.get("/farm/history/actual")
+
+def actual_history():
+
+    return get_actual_history(LEGACY_THING_ID)
+
+
+
+
+
+# ---- farm-scoped (every farm created through the dashboard) ----
+
+
+
+@app.get("/farm/{farm_id}/twin")
+
+def farm_twin_scoped(farm_id: str):
+
+    return get_twin(thing_id_for_farm(farm_id))
+
+
+
+
+
+@app.get("/farm/{farm_id}/digital-twin")
+
+def digital_twin_scoped(farm_id: str):
+
+    thing_id = thing_id_for_farm(farm_id)
+
+    return {
+
+        "attributes": get_attributes(thing_id),
+
+        "actual": get_actual(thing_id),
+
+        "virtual": get_virtual(thing_id)
+
+    }
+
+
+
+
+
+@app.get("/farm/{farm_id}/attributes")
+
+def farm_attributes_scoped(farm_id: str):
+
+    return get_attributes(thing_id_for_farm(farm_id))
+
+
+
+
+
+@app.get("/farm/{farm_id}/actual")
+
+def farm_actual_scoped(farm_id: str):
+
+    return get_actual(thing_id_for_farm(farm_id))
+
+
+
+
+
+@app.get("/farm/{farm_id}/virtual")
+
+def farm_virtual_scoped(farm_id: str):
+
+    return get_virtual(thing_id_for_farm(farm_id))
+
+
+
+
+
+@app.post("/farm/{farm_id}/virtual")
+
+def update_farm_virtual_scoped(farm_id: str, properties: dict):
+
+    return update_virtual_properties(properties, thing_id_for_farm(farm_id))
+
+
+
+
+
+@app.post("/farm/{farm_id}/actual")
+
+def update_farm_actual_scoped(farm_id: str, properties: dict):
+
+    return update_actual_properties(properties, thing_id_for_farm(farm_id))
+
+
+
+
+
+@app.get("/farm/{farm_id}/history/actual")
+
+def farm_actual_history_scoped(farm_id: str):
+
+    return get_actual_history(thing_id_for_farm(farm_id))
+
+
+
+
+
+@app.get("/dashboard")
+
+def dashboard():
+
+    return FileResponse(
+
+        "templates/dashboard.html"
+
+    )    <!DOCTYPE html>
+
 <html lang="en">
+
 <head>
+
 <meta charset="UTF-8">
+
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
 <title>Shri Timli Farm — Digital Twin</title>
+
 <link rel="preconnect" href="https://fonts.googleapis.com">
+
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+
 <style>
 
+
+
   :root{
+
     --bg:#F5F3EA;
+
     --surface:#FFFFFF;
+
     --surface-2:#EBE6D6;
+
     --ink:#16241B;
+
     --ink-soft:#5C6457;
+
     --line:#D9D0B8;
+
     --actual:#0E8F72;
+
     --actual-soft:#DEF2EA;
+
     --virtual:#6C42C9;
+
     --virtual-soft:#EBE3F9;
+
     --amber:#D97B17;
+
     --amber-soft:#FCEFDA;
+
     --danger:#C23B2C;
+
     --ok:#2E8B4E;
+
     --sky:#2D7DD2;
+
     --sky-soft:#E2EFFC;
+
     --leaf:#5A9E2F;
+
     --leaf-soft:#EBF5DF;
+
     --radius:10px;
+
   }
+
+
 
   *{box-sizing:border-box;}
+
   html,body{margin:0;padding:0;}
+
   body{
+
     background:var(--bg);
+
     color:var(--ink);
+
     font-family:'Inter',sans-serif;
+
     font-size:14px;
+
     line-height:1.45;
+
   }
+
   h1,h2,h3,.display{
+
     font-family:'Space Grotesk',sans-serif;
+
     margin:0;
+
     letter-spacing:-0.01em;
+
   }
+
   .mono{font-family:'IBM Plex Mono',monospace;}
+
   button{
+
     font-family:'Inter',sans-serif;
+
     cursor:pointer;
+
     border:1px solid var(--line);
+
     background:var(--surface);
+
     color:var(--ink);
+
     border-radius:8px;
+
     padding:8px 12px;
+
     font-size:13px;
+
     font-weight:500;
+
     transition:background .15s,border-color .15s,transform .1s;
+
   }
+
   button:hover{border-color:var(--ink-soft);}
+
   button:active{transform:translateY(1px);}
+
   button.primary{background:var(--ink);color:#fff;border-color:var(--ink);}
+
   button.primary:hover{background:#0e1812;}
+
   button.ghost{background:transparent;border-color:transparent;color:var(--ink-soft);}
+
   button.ghost:hover{color:var(--ink);background:var(--surface-2);}
+
   button.danger-btn{color:var(--danger);}
+
   button:disabled{opacity:.45;cursor:not-allowed;}
+
   button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible{
+
     outline:2px solid var(--amber);outline-offset:2px;
+
   }
+
   input,select{
+
     font-family:'IBM Plex Mono',monospace;
+
     font-size:13px;
+
     border:1px solid var(--line);
+
     border-radius:6px;
+
     padding:6px 8px;
+
     background:var(--surface);
+
     color:var(--ink);
+
     width:100%;
+
   }
+
   input[type="text"], select{font-family:'Inter',sans-serif;}
+
   label{font-size:11px;color:var(--ink-soft);text-transform:uppercase;letter-spacing:.04em;font-weight:600;display:block;margin-bottom:4px;}
+
   ::-webkit-scrollbar{width:10px;height:10px;}
+
   ::-webkit-scrollbar-thumb{background:var(--line);border-radius:6px;}
+
   ::-webkit-scrollbar-track{background:transparent;}
 
+
+
   /* ---------- layout shell ---------- */
+
   .app{display:flex;min-height:100vh;}
 
+
+
   /* ===== SIDEBAR ===== */
+
   .sidebar{
+
     width:230px;
+
     flex-shrink:0;
+
     background:var(--surface);
+
     border-right:1px solid var(--line);
+
     display:flex;
+
     flex-direction:column;
+
     height:100vh;
+
     position:sticky;
+
     top:0;
+
   }
+
   .brand{display:flex;align-items:center;gap:10px;padding:16px 14px;border-bottom:1px solid var(--line);}
+
   .brand-mark{
+
     width:30px;height:30px;border-radius:8px;flex-shrink:0;
+
     background:linear-gradient(135deg,var(--leaf),var(--actual) 55%,var(--virtual));
+
     position:relative;display:flex;align-items:center;justify-content:center;
+
     font-size:15px;box-shadow:0 2px 6px rgba(14,143,114,.25);
+
   }
+
   .brand-text{font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:13.5px;line-height:1.25;}
+
   .brand-text span{display:block;font-size:10.5px;color:var(--ink-soft);font-weight:500;font-family:'Inter',sans-serif;}
 
+
+
   .side-nav{display:flex;flex-direction:column;padding:10px;gap:2px;border-bottom:1px solid var(--line);}
+
   .side-nav-btn{
+
     display:flex;align-items:center;gap:9px;width:100%;text-align:left;
+
     border:1px solid transparent;background:transparent;border-radius:8px;
+
     padding:9px 10px;font-size:13.5px;font-weight:500;color:var(--ink-soft);
+
   }
+
   .side-nav-btn .ic{width:16px;text-align:center;flex-shrink:0;font-size:14px;}
+
   .side-nav-btn:hover{background:var(--surface-2);color:var(--ink);}
+
   .side-nav-btn.active{background:var(--ink);color:#fff;}
 
+
+
   .farm-section-label{
+
     padding:12px 14px 4px;font-size:11px;color:var(--ink-soft);
+
     text-transform:uppercase;letter-spacing:.05em;font-weight:600;
+
   }
+
   .farm-list{flex:1;overflow-y:auto;padding:2px 10px 10px;display:flex;flex-direction:column;gap:3px;}
+
   .farm-item{
+
     position:relative;border:1px solid transparent;border-radius:8px;
+
     padding:9px 10px;cursor:pointer;display:flex;flex-direction:column;gap:2px;
+
   }
+
   .farm-item:hover{background:var(--surface-2);}
+
   .farm-item.active{background:var(--actual-soft);border-color:var(--actual);}
+
   .farm-item-row{display:flex;align-items:center;justify-content:space-between;gap:6px;}
+
   .farm-item-name{font-size:13.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:flex;align-items:center;gap:6px;}
+
   .farm-item-icon{font-size:13px;flex-shrink:0;}
+
   .farm-item-meta{font-size:11px;color:var(--ink-soft);}
+
   .farm-item-actions{display:none;gap:2px;flex-shrink:0;}
+
   .farm-item:hover .farm-item-actions{display:flex;}
+
   .farm-item .icon-btn{
+
     border:none;background:transparent;padding:2px 5px;font-size:12px;border-radius:5px;color:var(--ink-soft);
+
   }
+
   .farm-item .icon-btn:hover{background:var(--surface);color:var(--ink);}
+
   .scenario-pill-mini{
+
     display:inline-flex;align-items:center;gap:4px;font-size:10.5px;font-weight:600;
+
     padding:1px 7px;border-radius:20px;margin-top:2px;width:fit-content;
+
   }
+
   .scenario-pill-mini .dotsm{width:5px;height:5px;border-radius:50%;}
 
+
+
   .sidebar-footer{padding:10px 14px 14px;border-top:1px solid var(--line);}
+
   .add-farm-btn{width:100%;justify-content:center;display:flex;align-items:center;gap:6px;}
 
+
+
   /* ===== MAIN ===== */
+
   .main{flex:1;min-width:0;display:flex;flex-direction:column;height:100vh;overflow-y:auto;}
+
   .topbar{
+
     position:sticky;top:0;z-index:5;background:var(--bg);
+
     padding:18px 28px 0;border-bottom:1px solid var(--line);
+
   }
+
   .topbar-title{display:flex;align-items:baseline;justify-content:space-between;gap:16px;padding-bottom:14px;}
+
   .topbar-title h1{font-size:21px;display:flex;align-items:center;gap:9px;}
+
   .title-icon{font-size:19px;}
+
   .topbar-title .sub{font-size:12.5px;color:var(--ink-soft);margin-top:2px;}
+
   .topbar-right{display:flex;gap:8px;align-items:center;}
 
+
+
   .tabs{display:flex;gap:4px;}
+
   .tab-btn{
+
     background:transparent;border:none;border-radius:0;padding:9px 4px;margin-right:18px;
+
     font-size:13.5px;font-weight:600;color:var(--ink-soft);border-bottom:2px solid transparent;
+
   }
+
   .tab-btn:hover{color:var(--ink);}
+
   .tab-btn.active{color:var(--ink);border-bottom-color:var(--ink);}
+
+
 
   .content{padding:22px 28px 60px;flex:1;}
 
+
+
   /* scenario pill bar on twin view */
+
   .scenario-bar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px;}
+
   .scenario-pill-btn{
+
     display:flex;align-items:center;gap:7px;padding:8px 14px;border-radius:30px;
+
     border:1.5px solid var(--line);background:var(--surface);font-weight:600;font-size:13px;color:var(--ink-soft);
+
   }
+
   .scenario-pill-btn .dotsm{width:7px;height:7px;border-radius:50%;background:var(--ink-soft);flex-shrink:0;}
+
   .scenario-pill-btn .pill-icon{font-size:13px;line-height:1;flex-shrink:0;}
+
   .scenario-pill-btn:hover{border-color:var(--ink-soft);color:var(--ink);}
+
   .scenario-pill-btn.active{background:var(--ink);color:#fff;border-color:var(--ink);}
+
   .scenario-pill-btn.active .dotsm{background:#fff;}
+
   .scenario-pill-btn.add-custom{border-style:dashed;}
 
+
+
   .banner{
+
     display:flex;align-items:center;gap:10px;padding:10px 14px;border-radius:8px;
+
     font-size:13px;font-weight:500;margin-bottom:16px;
+
   }
+
   .banner.amber{background:var(--amber-soft);color:#7a4d10;}
+
   .banner.stale{background:#F4E3E0;color:#7a2a20;}
+
   .banner-dot{width:8px;height:8px;border-radius:50%;background:currentColor;flex-shrink:0;}
 
+
+
   /* ===== DASHBOARD: actual/virtual stacked sections ===== */
+
   .twin-section{margin-bottom:26px;}
+
   .twin-section-head{
+
     display:flex;align-items:center;gap:10px;padding-bottom:10px;margin-bottom:14px;
+
     border-bottom:2px solid var(--line);
+
   }
+
   .twin-section-head .dot{width:9px;height:9px;border-radius:50%;}
+
   .dot.actual{background:var(--actual);}
+
   .dot.virtual{background:var(--virtual);}
+
   .twin-section-title{font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:16px;}
+
   .twin-section-count{
+
     margin-left:auto;font-size:11.5px;color:var(--ink-soft);background:var(--surface-2);
+
     padding:2px 9px;border-radius:20px;font-weight:600;
+
   }
+
+
 
   .twin-cols{display:grid;grid-template-columns:280px 1fr;gap:18px;}
+
   @media (max-width:880px){ .twin-cols{grid-template-columns:1fr;} }
+
   .sensor-grid{display:grid;grid-template-columns:1fr 1fr;gap:0 28px;}
+
   .sensor-grid .sensor-row{grid-column:span 1;}
+
   @media (max-width:760px){ .sensor-grid{grid-template-columns:1fr;} }
 
+
+
   .panel{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;}
+
   .panel-head{display:flex;align-items:center;gap:8px;padding:11px 14px;border-bottom:1px solid var(--line);background:var(--surface-2);}
+
   .panel-title{font-size:12.5px;font-weight:600;text-transform:uppercase;letter-spacing:.03em;color:var(--ink-soft);}
+
   .panel-body{padding:14px;}
 
+
+
   /* image upload box (actual side) */
+
   .img-upload-box{
+
     aspect-ratio:1/1;border:1.5px dashed var(--line);border-radius:8px;
+
     display:flex;align-items:center;justify-content:center;cursor:pointer;
+
     background:var(--surface-2);overflow:hidden;position:relative;margin-bottom:10px;
+
   }
+
   .img-upload-box:hover{border-color:var(--actual);}
+
   .img-upload-box img{width:100%;height:100%;object-fit:cover;}
+
   .img-upload-box .plus{font-size:26px;color:var(--ink-soft);font-weight:300;}
+
   .img-meta{font-size:11.5px;color:var(--ink-soft);display:flex;flex-direction:column;gap:3px;}
+
   .img-meta b{color:var(--ink);font-weight:600;}
 
+
+
   .sensor-row{padding:11px 0;border-bottom:1px solid var(--surface-2);}
+
   .sensor-row:last-child{border-bottom:none;}
+
   .sensor-row-top{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:6px;}
+
   .sensor-name{font-weight:600;font-size:13.5px;}
+
   .sensor-meta{font-size:11px;color:var(--ink-soft);margin-top:1px;}
+
   .sensor-value{font-family:'IBM Plex Mono',monospace;font-weight:600;font-size:15px;white-space:nowrap;}
+
   .sensor-value .unit{font-size:11px;color:var(--ink-soft);font-weight:500;margin-left:3px;}
+
   .override-flag{
+
     display:inline-block;margin-left:7px;font-size:10px;font-weight:700;text-transform:uppercase;
+
     background:var(--amber-soft);color:#7a4d10;padding:1px 7px;border-radius:20px;letter-spacing:.03em;
+
   }
+
   .stale-tag{color:var(--danger);}
 
+
+
   .rangebar-track{height:6px;background:var(--surface-2);border-radius:4px;position:relative;}
+
   .rangebar-fill{position:absolute;left:0;top:0;height:100%;border-radius:4px;background:var(--virtual);}
+
   .rangebar.actual .rangebar-fill{background:var(--actual);}
+
   .rangebar.overridden .rangebar-fill{background:var(--amber);}
+
   .rangebar-marker{position:absolute;top:-3px;width:2px;height:12px;background:var(--ink);border-radius:2px;}
+
   .rangebar-labels{display:flex;justify-content:space-between;font-size:10.5px;color:var(--ink-soft);margin-top:4px;}
 
+
+
   .empty-state{
+
     padding:36px 20px;text-align:center;color:var(--ink-soft);font-size:13.5px;
+
     border:1.5px dashed var(--line);border-radius:10px;
+
   }
+
   .empty-state .big{font-size:15px;color:var(--ink);font-weight:600;margin-bottom:6px;display:block;}
 
+
+
   /* ===== SETTINGS TAB ===== */
+
   .settings-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-bottom:22px;}
+
   @media (max-width:980px){ .settings-grid{grid-template-columns:1fr;} }
 
+
+
   .add-sensor-form{display:flex;flex-direction:column;gap:10px;}
+
   .form-row-2{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
 
+
+
   .sensor-table-row{
+
     display:grid;grid-template-columns:1.4fr .8fr 1fr .7fr .7fr auto;gap:8px;align-items:center;
+
     padding:7px 0;border-bottom:1px solid var(--surface-2);font-size:12.5px;
+
   }
+
   .sensor-table-row.head{font-size:11px;color:var(--ink-soft);text-transform:uppercase;letter-spacing:.03em;font-weight:600;}
+
   .mode-badge{
+
     display:inline-block;padding:2px 9px;border-radius:20px;font-size:11px;font-weight:600;text-transform:capitalize;
+
   }
+
   .mode-badge.actual{background:var(--actual-soft);color:var(--actual);}
+
   .mode-badge.virtual{background:var(--virtual-soft);color:var(--virtual);}
+
   .sensor-table-name{display:flex;align-items:center;gap:7px;}
 
+
+
   /* ===== SENSOR LIBRARY (settings) ===== */
+
   .lib-panel{margin-bottom:22px;}
+
   .lib-groups{display:grid;grid-template-columns:1fr 1fr;gap:20px;}
+
   @media (max-width:880px){ .lib-groups{grid-template-columns:1fr;} }
+
   .lib-group-head{display:flex;align-items:center;gap:8px;margin-bottom:10px;}
+
   .lib-group-count{font-size:11px;color:var(--ink-soft);font-weight:600;}
+
   .lib-chip-list{display:flex;flex-direction:column;gap:7px;}
+
   .lib-chip{
+
     display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--line);
+
     border-radius:9px;background:var(--surface);transition:border-color .15s,background .15s;
+
   }
+
   .lib-chip:hover{border-color:var(--ink-soft);background:var(--surface-2);}
+
   .lib-chip-icon{font-size:16px;width:22px;text-align:center;flex-shrink:0;}
+
   .lib-chip-icon.sm{font-size:13px;width:16px;}
+
   .lib-chip-info{display:flex;flex-direction:column;gap:1px;flex:1;min-width:0;}
+
   .lib-chip-name{font-size:12.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+
   .lib-chip-meta{font-size:10.5px;color:var(--ink-soft);font-family:'IBM Plex Mono',monospace;}
+
   .lib-add-btn{
+
     flex-shrink:0;border:1px solid var(--line);background:var(--surface);font-size:11px;font-weight:700;
+
     padding:4px 10px;border-radius:20px;color:var(--ink);
+
   }
+
   .lib-add-btn:hover{background:var(--actual);color:#fff;border-color:var(--actual);}
+
   .lib-empty{font-size:12px;color:var(--ink-soft);padding:10px 0;}
+
   .farm-rename-icon{font-size:18px;}
 
+
+
   /* scenario cards in settings */
+
   .scenario-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px;margin-bottom:18px;}
+
   .scenario-card{
+
     background:var(--surface);border:1px solid var(--line);border-top:4px solid var(--ink-soft);
+
     border-radius:10px;padding:14px;cursor:pointer;position:relative;transition:transform .1s;
+
   }
+
   .scenario-card:hover{transform:translateY(-2px);box-shadow:0 4px 14px rgba(0,0,0,.06);}
+
   .scenario-card.open{outline:2px solid var(--ink);outline-offset:-1px;}
+
   .scenario-card.live{background:var(--amber-soft);}
+
   .scenario-card-title{display:flex;align-items:center;gap:7px;font-weight:600;font-size:14px;margin-bottom:5px;}
+
   .scenario-card-title .dot{width:8px;height:8px;border-radius:50%;}
+
   .scenario-card-title .card-icon{font-size:15px;line-height:1;}
+
   .scenario-card-status{font-size:11.5px;color:var(--ink-soft);}
+
   .scenario-card.custom-card{border-style:dashed;display:flex;align-items:center;justify-content:center;color:var(--ink-soft);font-weight:600;}
+
   .live-badge{
+
     position:absolute;top:10px;right:10px;background:var(--amber);color:#fff;font-size:9.5px;
+
     font-weight:700;padding:2px 7px;border-radius:20px;text-transform:uppercase;letter-spacing:.03em;
+
   }
+
+
 
   .scenario-editor{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:16px;}
+
   .scenario-editor-head{display:flex;justify-content:space-between;gap:14px;align-items:flex-start;margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid var(--surface-2);}
+
   .scenario-editor-head h3{font-size:16px;margin-bottom:4px;}
+
   .helper-text{font-size:12px;color:var(--ink-soft);max-width:520px;}
+
   .scenario-editor-actions{display:flex;gap:8px;flex-shrink:0;}
+
   .override-row{
+
     display:grid;grid-template-columns:1fr 110px 110px;gap:10px;align-items:center;
+
     padding:8px 0;border-bottom:1px solid var(--surface-2);
+
   }
+
   .override-row:last-child{border-bottom:none;}
+
   .sname{font-size:13px;font-weight:500;}
 
+
+
   /* custom scenario name prompt row */
+
   .custom-name-row{display:flex;gap:8px;margin-bottom:14px;}
+
   .custom-name-row input{flex:1;}
 
+
+
   /* edit-farm modal-ish settings header */
+
   .settings-head-row{display:flex;justify-content:space-between;align-items:center;margin-bottom:18px;}
+
   .farm-rename{display:flex;align-items:center;gap:10px;}
+
   .farm-rename input{font-family:'Space Grotesk',sans-serif;font-size:18px;font-weight:600;border:none;background:transparent;padding:2px 4px;width:auto;min-width:160px;}
+
   .farm-rename input:hover, .farm-rename input:focus{background:var(--surface-2);border-radius:6px;}
 
+
+
   /* ===== CREATE FARM OVERLAY ===== */
+
   .overlay{
+
     position:fixed;inset:0;background:rgba(28,43,31,.45);z-index:50;
+
     display:flex;justify-content:flex-end;
+
   }
+
   .create-panel{
+
     width:min(560px,92vw);height:100vh;background:var(--bg);box-shadow:-8px 0 30px rgba(0,0,0,.18);
+
     display:flex;flex-direction:column;animation:slideIn .18s ease-out;
+
   }
+
   @keyframes slideIn{from{transform:translateX(24px);opacity:0;}to{transform:translateX(0);opacity:1;}}
+
   .create-head{padding:20px 24px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;}
+
   .create-head h2{font-size:18px;}
+
   .create-body{flex:1;overflow-y:auto;padding:20px 24px;}
+
   .create-foot{padding:16px 24px;border-top:1px solid var(--line);display:flex;justify-content:flex-end;gap:8px;}
+
   .create-step-label{font-size:11px;color:var(--ink-soft);text-transform:uppercase;letter-spacing:.04em;font-weight:600;margin-bottom:14px;}
 
+
+
   .preset-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:18px;}
+
   .preset-card{
+
     border:1.5px solid var(--line);border-radius:10px;padding:12px;cursor:pointer;background:var(--surface);
+
   }
+
   .preset-card:hover{border-color:var(--ink-soft);}
+
   .preset-card.selected{border-color:var(--ink);background:var(--surface-2);}
+
   .preset-card .pname{font-weight:600;font-size:13.5px;margin-bottom:3px;}
+
   .preset-card .pmeta{font-size:11.5px;color:var(--ink-soft);}
 
+
+
   ::selection{background:var(--virtual-soft);}
+
 </style>
+
 </head>
+
 <body>
+
+
 
 <div class="app">
 
+
+
   <!-- SIDEBAR -->
+
   <div class="sidebar">
+
     <div class="brand">
+
       <div class="brand-mark">🌱</div>
+
       <div class="brand-text">Shri Timli<span>Digital Twin</span></div>
+
     </div>
+
+
 
     <div class="side-nav">
+
       <button class="side-nav-btn" data-tab="dashboard" onclick="setTab('dashboard')"><span class="ic">🛰️</span>Twin</button>
+
       <button class="side-nav-btn" data-tab="settings" onclick="setTab('settings')"><span class="ic">⚙️</span>Settings</button>
+
     </div>
+
+
 
     <div class="farm-section-label">Farms</div>
+
     <div class="farm-list" id="farmList"></div>
 
+
+
     <div class="sidebar-footer">
+
       <button class="add-farm-btn primary" onclick="openCreateFarm()">+ Create Farm</button>
+
     </div>
+
   </div>
 
+
+
   <!-- MAIN -->
+
   <div class="main">
+
     <div class="topbar">
+
       <div class="topbar-title">
+
         <div>
+
           <h1 id="farmTitle">Farm</h1>
+
           <div class="sub" id="farmSub"></div>
+
         </div>
+
       </div>
+
       <div class="tabs">
+
         <button class="tab-btn" data-tab="dashboard" onclick="setTab('dashboard')">Twin</button>
+
         <button class="tab-btn" data-tab="settings" onclick="setTab('settings')">Settings</button>
+
       </div>
+
     </div>
+
     <div class="content" id="content"></div>
+
   </div>
+
+
 
 </div>
 
+
+
 <div id="overlayRoot"></div>
 
+
+
 <script>
+
 /* =========================================================================
+
    STATE
+
    Backend contract (assumed, extend on the FastAPI side):
+
      Farm 1 is "legacy" and keeps using your existing endpoints:
+
        GET  /farm/actual          GET  /farm/virtual         POST /farm/virtual
+
      Any new farm created here uses farm-scoped endpoints:
+
        GET  /farm/{farmId}/actual GET /farm/{farmId}/virtual POST /farm/{farmId}/virtual
+
      If a request fails (route not built yet), the UI keeps working off
+
      in-memory simulated values so you can demo the flow before the
+
      backend routes exist.
+
    ========================================================================= */
 
+
+
 const BASE_SCENARIOS = ['Flood','Drought','Heat Stroke','Excessive Cold'];
+
 const SCENARIO_COLORS = {
+
   'Flood':'#2E6F9E', 'Drought':'#C97A1B', 'Heat Stroke':'#B23A2E', 'Excessive Cold':'#2E91A8'
+
 };
+
 const CUSTOM_PALETTE = ['#6B4FA0','#3E7C4A','#A84B8F','#1F8A7A','#8A5A2E'];
 
+
+
 let state = {
+
   farms: [],
+
   activeFarmId: null,
+
   activeTab: 'dashboard',
+
   openScenario: null,
+
   overlay: null,        // 'create' | null
+
   createDraft: null,
+
 };
 
+
+
 function uid(p){ return p+'_'+Math.random().toString(36).slice(2,9); }
+
 function clamp(n,a,b){ return Math.max(a,Math.min(b,n)); }
+
 function round(n,d){ const f=Math.pow(10,d); return Math.round(n*f)/f; }
+
 function fmt(n,d=1){ if(n===undefined||n===null||isNaN(n)) return '—'; return round(n,d); }
+
 function randIn(min,max,d){ return round(min + Math.random()*(max-min), d); }
+
 function timeAgo(ts){
+
   if(!ts) return 'never';
+
   const s = Math.floor((Date.now()-ts)/1000);
+
   if(s<5) return 'just now';
+
   if(s<60) return s+'s ago';
+
   const m = Math.floor(s/60);
+
   if(m<60) return m+'m ago';
+
   return Math.floor(m/60)+'h ago';
+
 }
+
 function scenarioColor(name, farm){
+
   if(SCENARIO_COLORS[name]) return SCENARIO_COLORS[name];
+
   const customNames = Object.keys(farm.scenarios).filter(n=>!BASE_SCENARIOS.includes(n));
+
   const idx = customNames.indexOf(name);
+
   return CUSTOM_PALETTE[idx % CUSTOM_PALETTE.length] || '#6B4FA0';
+
 }
+
 const SCENARIO_ICONS = { 'Flood':'🌊', 'Drought':'🏜️', 'Heat Stroke':'🥵', 'Excessive Cold':'🥶' };
+
 function scenarioIcon(name){ return SCENARIO_ICONS[name] || '⚠️'; }
 
+
+
 /* ---------------- sensor schema (matches real Ditto twin JSON) ---------------- */
+
 /* actual = real hardware probes (soil only). virtual = simulated weather/plant/soil-chem/risk layer. */
 
+
+
 function defaultSensors(){
+
   return [
+
     // ACTUAL — real soil probe (from Ditto "actual" feature)
+
     {key:'moisture', name:'Soil Moisture', unit:'%', mode:'actual', min:5, max:60, decimals:1, value:9.6},
+
     {key:'temperature', name:'Soil Temperature', unit:'°C', mode:'actual', min:10, max:38, decimals:1, value:23},
+
     {key:'ph', name:'Soil pH', unit:'pH', mode:'actual', min:5.0, max:8.0, decimals:2, value:6.41},
+
     {key:'ec', name:'Electrical Conductivity', unit:'dS/m', mode:'actual', min:0.2, max:12, decimals:2, value:10},
+
     {key:'nitrogen', name:'Nitrogen (N)', unit:'mg/kg', mode:'actual', min:0, max:180, decimals:0, value:0},
+
     {key:'phosphorus', name:'Phosphorus (P)', unit:'mg/kg', mode:'actual', min:0, max:120, decimals:0, value:1},
+
     {key:'potassium', name:'Potassium (K)', unit:'mg/kg', mode:'actual', min:0, max:150, decimals:0, value:2},
 
+
+
     // VIRTUAL — simulated weather / plant / soil-chemistry / risk layer
+
     {key:'humidity', name:'Humidity', unit:'%', mode:'virtual', min:20, max:100, decimals:1, value:95},
+
     {key:'airTemperature', name:'Air Temperature', unit:'°C', mode:'virtual', min:8, max:46, decimals:1, value:28},
+
     {key:'rainfall', name:'Rainfall', unit:'mm', mode:'virtual', min:0, max:200, decimals:1, value:15},
+
     {key:'windSpeed', name:'Wind Speed', unit:'km/h', mode:'virtual', min:0, max:60, decimals:1, value:5},
+
     {key:'solarRadiation', name:'Solar Radiation', unit:'W/m²', mode:'virtual', min:0, max:1100, decimals:0, value:750},
+
     {key:'sunlightHours', name:'Sunlight (cumulative)', unit:'hrs', mode:'virtual', min:0, max:3000, decimals:0, value:1000},
+
     {key:'uvIndex', name:'UV Index', unit:'idx', mode:'virtual', min:0, max:12, decimals:1, value:6},
+
     {key:'co2', name:'CO₂ Concentration', unit:'ppm', mode:'virtual', min:300, max:1200, decimals:0, value:420},
+
     {key:'plantHeight', name:'Plant Height', unit:'mm', mode:'virtual', min:0, max:2000, decimals:0, value:1043},
+
     {key:'canopyCoverage', name:'Canopy Coverage', unit:'%', mode:'virtual', min:0, max:100, decimals:1, value:5},
+
     {key:'rootDepth', name:'Root Depth', unit:'cm', mode:'virtual', min:0, max:60, decimals:1, value:5},
+
     {key:'irrigationRate', name:'Irrigation Rate', unit:'L/hr', mode:'virtual', min:0, max:100, decimals:1, value:20},
+
     {key:'irrigationDuration', name:'Irrigation Duration', unit:'min', mode:'virtual', min:0, max:180, decimals:0, value:30},
+
     {key:'soilOrganicMatter', name:'Soil Organic Matter', unit:'%', mode:'virtual', min:0, max:10, decimals:2, value:3.5},
+
     {key:'soilSalinity', name:'Soil Salinity', unit:'dS/m', mode:'virtual', min:0, max:4, decimals:2, value:0.3},
+
     {key:'soilCompaction', name:'Soil Compaction', unit:'%', mode:'virtual', min:0, max:100, decimals:1, value:15},
+
     {key:'calcium', name:'Calcium', unit:'mg/kg', mode:'virtual', min:0, max:300, decimals:0, value:120},
+
     {key:'magnesium', name:'Magnesium', unit:'mg/kg', mode:'virtual', min:0, max:150, decimals:0, value:45},
+
     {key:'sulfur', name:'Sulfur', unit:'mg/kg', mode:'virtual', min:0, max:100, decimals:0, value:30},
+
     {key:'zinc', name:'Zinc', unit:'mg/kg', mode:'virtual', min:0, max:20, decimals:1, value:3},
+
     {key:'boron', name:'Boron', unit:'mg/kg', mode:'virtual', min:0, max:5, decimals:2, value:0.5},
+
     {key:'iron', name:'Iron', unit:'mg/kg', mode:'virtual', min:0, max:30, decimals:1, value:8},
+
     {key:'copper', name:'Copper', unit:'mg/kg', mode:'virtual', min:0, max:10, decimals:1, value:1},
+
     {key:'manganese', name:'Manganese', unit:'mg/kg', mode:'virtual', min:0, max:20, decimals:1, value:4},
+
     {key:'diseaseRisk', name:'Disease Risk', unit:'%', mode:'virtual', min:0, max:100, decimals:0, value:10},
+
     {key:'pestRisk', name:'Pest Risk', unit:'%', mode:'virtual', min:0, max:100, decimals:0, value:15},
+
     {key:'ndvi', name:'NDVI (Crop Health)', unit:'idx', mode:'virtual', min:0, max:1, decimals:2, value:0.75},
+
     {key:'evi', name:'EVI (Enhanced Veg. Index)', unit:'idx', mode:'virtual', min:0, max:1, decimals:2, value:0.62},
+
     {key:'ndwi', name:'NDWI (Water Index)', unit:'idx', mode:'virtual', min:-1, max:1, decimals:2, value:0.55},
+
     {key:'floodRisk', name:'Flood Risk', unit:'%', mode:'virtual', min:0, max:100, decimals:0, value:5},
+
     {key:'droughtRisk', name:'Drought Risk', unit:'%', mode:'virtual', min:0, max:100, decimals:0, value:20},
+
   ];
+
 }
+
+
 
 // non-numeric virtual fields kept on the twin but rendered as text, not range bars
+
 function defaultMeta(){
+
   return { plantingDate:'2026-06-01', daysSincePlanting:7, growthStage:'Seedling', crop:'Tomato', field:'Field A' };
+
 }
+
+
 
 function defaultScenarioOverrides(sensors){
+
   const find = k => sensors.find(s=>s.key===k);
+
   const mk = (keys, pairs)=>{
+
     const o={};
+
     keys.forEach((k,i)=>{ if(find(k)) o[k]={min:pairs[i][0],max:pairs[i][1]}; });
+
     return o;
+
   };
+
   return {
+
     'Flood': mk(['rainfall','moisture','humidity','floodRisk','droughtRisk'], [[120,200],[45,60],[85,100],[60,100],[0,5]]),
+
     'Drought': mk(['rainfall','moisture','humidity','airTemperature','droughtRisk','floodRisk'], [[0,2],[5,12],[10,30],[35,46],[60,100],[0,5]]),
+
     'Heat Stroke': mk(['airTemperature','humidity','moisture','uvIndex'], [[40,46],[10,25],[5,15],[9,12]]),
+
     'Excessive Cold': mk(['airTemperature','temperature','humidity'], [[-8,2],[0,6],[40,70]]),
+
   };
+
 }
 
+
+
 function createFarm(name, legacy=false, opts={}){
+
   const sensors = opts.sensors ? JSON.parse(JSON.stringify(opts.sensors)) : defaultSensors();
+
   const meta = opts.meta ? {...opts.meta} : defaultMeta();
+
   const defaults = defaultScenarioOverrides(sensors);
+
   const scenarios = {};
+
   BASE_SCENARIOS.forEach(s=>{ scenarios[s] = {overrides: defaults[s] || {}, saved:false}; });
+
   return {
+
     id: legacy ? 'legacy' : (opts.id || uid('farm')),
+
     name, legacy,
+
     field: meta.field, crop: meta.crop,
+
     sensors, meta, scenarios,
+
     activeScenario: null,
+
     actualStale: false,
+
     lastActualOk: 0,
+
     timers: {actual:null, virtual:null},
+
     image: null, // {dataUrl, ts}
+
     history: [], // [{ts, scenario, snapshot:{key:value}}]
+
   };
+
 }
+
+
 
 function activeFarm(){ return state.farms.find(f=>f.id===state.activeFarmId); }
 
+
+
 /* icon glyphs per sensor key — falls back to a mode-based default */
+
 const SENSOR_ICONS = {
+
   moisture:'💧', temperature:'🌡️', ph:'⚗️', ec:'⚡', nitrogen:'🧪', phosphorus:'🧪', potassium:'🧪',
+
   humidity:'💦', airTemperature:'🌤️', rainfall:'🌧️', windSpeed:'🌬️', solarRadiation:'☀️',
+
   sunlightHours:'🕐', uvIndex:'🔆', co2:'☁️', plantHeight:'🌱', canopyCoverage:'🍃', rootDepth:'🌿',
+
   irrigationRate:'🚿', irrigationDuration:'⏱️', soilOrganicMatter:'🪴', soilSalinity:'🧂',
+
   soilCompaction:'🪨', calcium:'🧪', magnesium:'🧪', sulfur:'🧪', zinc:'🧪', boron:'🧪', iron:'🧪',
+
   copper:'🧪', manganese:'🧪', diseaseRisk:'🦠', pestRisk:'🐛', ndvi:'🛰️', evi:'🛰️', ndwi:'🛰️',
+
   floodRisk:'🌊', droughtRisk:'🏜️',
+
 };
+
 function sensorIcon(s){ return SENSOR_ICONS[s.key] || (s.mode==='actual' ? '📟' : '🧬'); }
 
+
+
 /* Combined sensor library pooled from every farm that currently exists.
+
    Grows as new sensor types are added on any farm. Excludes sensors the
+
    target farm already has, and is split into actual / virtual groups. */
+
 function sensorLibrary(targetFarm){
+
   const seen = new Map(); // key -> sensor definition (first one found)
+
   state.farms.forEach(f=>{
+
     f.sensors.forEach(s=>{
+
       if(!seen.has(s.key)) seen.set(s.key, s);
+
     });
+
   });
+
   const have = new Set(targetFarm.sensors.map(s=>s.key));
+
   const actual = [];
+
   const virtual = [];
+
   seen.forEach((s,key)=>{
+
     if(have.has(key)) return;
+
     (s.mode==='actual' ? actual : virtual).push(s);
+
   });
+
   actual.sort((a,b)=>a.name.localeCompare(b.name));
+
   virtual.sort((a,b)=>a.name.localeCompare(b.name));
+
   return {actual, virtual};
+
 }
 
+
+
 function addSensorFromLibrary(key){
+
   const farm = activeFarm(); if(!farm) return;
+
   if(farm.sensors.some(s=>s.key===key)) return;
+
   let src = null;
+
   for(const f of state.farms){
+
     const found = f.sensors.find(s=>s.key===key);
+
     if(found){ src = found; break; }
+
   }
+
   if(!src) return;
+
   farm.sensors.push({...src});
+
   renderContent();
+
 }
+
+
 
 /* ---------------- backend I/O (graceful fallback) ---------------- */
 
+
+
 function actualUrl(farm){ return farm.legacy ? '/farm/actual' : `/farm/${farm.id}/actual`; }
+
 function virtualUrl(farm){ return farm.legacy ? '/farm/virtual' : `/farm/${farm.id}/virtual`; }
 
+
+
 async function tickActual(farm){
+
   try{
+
     const res = await fetch(actualUrl(farm));
+
     if(!res.ok) throw new Error('status '+res.status);
+
     const data = await res.json();
+
     farm.sensors.forEach(s=>{
+
       if(s.mode==='actual' && data[s.key]!==undefined && data[s.key]!==null){
+
         s.value = data[s.key];
+
       }
+
     });
+
     farm.actualStale = false;
+
     farm.lastActualOk = Date.now();
+
   }catch(e){
+
     // backend route missing or offline — keep last known actual values (passthrough)
+
     farm.actualStale = true;
+
   }
+
   if(farm.id===state.activeFarmId && state.activeTab==='dashboard') renderContent();
+
 }
+
+
 
 function activeOverrideFor(farm, sensorKey){
+
   if(!farm.activeScenario) return null;
+
   const cfg = farm.scenarios[farm.activeScenario];
+
   return cfg && cfg.overrides[sensorKey] ? cfg.overrides[sensorKey] : null;
+
 }
+
+
 
 function snapshotFarm(farm){
+
   const snap = {};
+
   farm.sensors.forEach(s=>{ snap[s.key]=s.value; });
+
   return snap;
+
 }
+
+
 
 function tickVirtual(farm){
+
   farm.sensors.forEach(s=>{
+
     const override = activeOverrideFor(farm, s.key);
+
     if(override){
+
       s.value = randIn(override.min, override.max, s.decimals);
+
     } else if(s.mode==='virtual'){
+
       s.value = randIn(s.min, s.max, s.decimals);
+
     }
+
     // actual-mode sensors with no active override keep whatever tickActual gave them
+
   });
+
   publishVirtual(farm);
+
   farm.history.push({ts:Date.now(), scenario:farm.activeScenario, snapshot:snapshotFarm(farm)});
+
   if(farm.history.length>200) farm.history.shift();
+
   if(farm.id===state.activeFarmId && state.activeTab==='dashboard') renderContent();
+
 }
+
+
 
 async function publishVirtual(farm){
+
   const payload = {};
+
   farm.sensors.forEach(s=>{
+
     if(s.mode==='virtual' || activeOverrideFor(farm,s.key)) payload[s.key]=s.value;
+
   });
+
   try{
+
     await fetch(virtualUrl(farm), {
+
       method:'POST',
+
       headers:{'Content-Type':'application/json'},
+
       body: JSON.stringify(payload)
+
     });
+
   }catch(e){ /* route not built yet — value still tracked locally for the demo */ }
+
 }
 
+
+
 function startFarmTimers(farm){
+
   stopFarmTimers(farm);
+
   farm.timers.actual = setInterval(()=>tickActual(farm), 3000);
+
   farm.timers.virtual = setInterval(()=>tickVirtual(farm), 4000);
+
   tickActual(farm); tickVirtual(farm);
+
 }
+
 function stopFarmTimers(farm){
+
   if(farm.timers.actual) clearInterval(farm.timers.actual);
+
   if(farm.timers.virtual) clearInterval(farm.timers.virtual);
+
 }
+
+
 
 /* ---------------- farm management ---------------- */
 
+
+
 function selectFarm(id){ state.activeFarmId = id; state.openScenario=null; renderAll(); }
+
 function setTab(tab){ state.activeTab = tab; state.openScenario=null; renderAll(); }
 
+
+
 function duplicateFarm(id){
+
   const src = state.farms.find(f=>f.id===id);
+
   if(!src) return;
+
   const farm = createFarm(src.name+' (copy)', false, {sensors:src.sensors, meta:src.meta});
+
   farm.scenarios = JSON.parse(JSON.stringify(src.scenarios));
+
   state.farms.push(farm);
+
   state.activeFarmId = farm.id;
+
   startFarmTimers(farm);
+
   renderAll();
+
 }
+
+
 
 function removeFarm(id){
+
   const farm = state.farms.find(f=>f.id===id);
+
   if(!farm) return;
+
   if(!confirm(`Remove "${farm.name}"? This stops its simulation.`)) return;
+
   stopFarmTimers(farm);
+
   state.farms = state.farms.filter(f=>f.id!==id);
+
   if(state.activeFarmId===id){
+
     state.activeFarmId = state.farms[0] ? state.farms[0].id : null;
+
   }
+
   renderAll();
+
 }
 
+
+
 function renameFarm(id, name){
+
   const farm = state.farms.find(f=>f.id===id);
+
   if(!farm || !name.trim()) return;
+
   farm.name = name.trim();
+
   renderSidebar();
+
   document.getElementById('farmTitle').innerHTML = `<span class="title-icon">${cropIcon(farm.crop)}</span>${farm.name}`;
+
 }
+
+
 
 /* ---------------- image upload (actual side) ---------------- */
 
+
+
 function triggerImageUpload(){
+
   const input = document.getElementById('hiddenImgInput');
+
   input.click();
+
 }
+
 function handleImageUpload(evt){
+
   const farm = activeFarm(); if(!farm) return;
+
   const file = evt.target.files[0];
+
   if(!file) return;
+
   const reader = new FileReader();
+
   reader.onload = ()=>{
+
     farm.image = {dataUrl: reader.result, ts: Date.now()};
+
     renderContent();
+
   };
+
   reader.readAsDataURL(file);
+
   evt.target.value = '';
+
 }
+
 function viewImage(){
+
   const farm = activeFarm();
+
   if(farm && farm.image) window.open(farm.image.dataUrl, '_blank');
+
 }
+
+
 
 /* ---------------- sensor configurator ---------------- */
 
+
+
 function addSensorFromForm(){
+
   const farm = activeFarm(); if(!farm) return;
+
   const name = document.getElementById('newSensorName').value.trim();
+
   const unit = document.getElementById('newSensorUnit').value.trim();
+
   const mode = document.getElementById('newSensorMode').value;
+
   const min = parseFloat(document.getElementById('newSensorMin').value);
+
   const max = parseFloat(document.getElementById('newSensorMax').value);
+
   if(!name || isNaN(min) || isNaN(max) || min>=max){
+
     alert('Give the sensor a name and a valid min < max range.');
+
     return;
+
   }
+
   const key = name.toLowerCase().replace(/[^a-z0-9]+/g,'_').replace(/^_|_$/g,'') || uid('sensor');
+
   if(farm.sensors.some(s=>s.key===key)){ alert('A sensor with this name already exists.'); return; }
+
   farm.sensors.push({key, name, unit, mode, min, max, decimals: (max-min)<5 ? 2 : 1, value: round((min+max)/2,1)});
+
   renderContent();
+
 }
+
+
 
 function removeSensor(key){
+
   const farm = activeFarm(); if(!farm) return;
+
   farm.sensors = farm.sensors.filter(s=>s.key!==key);
+
   Object.keys(farm.scenarios).forEach(s=>{ delete farm.scenarios[s].overrides[key]; });
+
   renderContent();
+
 }
+
+
 
 function updateSensorRange(key, field, value){
+
   const farm = activeFarm(); if(!farm) return;
+
   const sensor = farm.sensors.find(s=>s.key===key); if(!sensor) return;
+
   const v = parseFloat(value);
+
   if(!isNaN(v)) sensor[field]=v;
+
 }
 
+
+
 function toggleSensorMode(key){
+
   const farm = activeFarm(); if(!farm) return;
+
   const sensor = farm.sensors.find(s=>s.key===key); if(!sensor) return;
+
   sensor.mode = sensor.mode==='actual' ? 'virtual' : 'actual';
+
   renderContent();
+
 }
+
+
 
 /* ---------------- scenarios ---------------- */
 
+
+
 function openScenario(name){
+
   state.openScenario = state.openScenario===name ? null : name;
+
   renderContent();
+
 }
+
+
 
 function updateOverride(scenario, key, field, value){
+
   const farm = activeFarm(); if(!farm) return;
+
   const cfg = farm.scenarios[scenario];
+
   if(!cfg.overrides[key]) cfg.overrides[key] = {min:0,max:0};
+
   const v = parseFloat(value);
+
   if(!isNaN(v)) cfg.overrides[key][field]=v;
+
 }
+
+
 
 function toggleOverrideActive(scenario, key, checked){
+
   const farm = activeFarm(); if(!farm) return;
+
   const cfg = farm.scenarios[scenario];
+
   if(checked){
+
     if(!cfg.overrides[key]){
+
       const sensor = farm.sensors.find(s=>s.key===key);
+
       cfg.overrides[key] = {min:sensor.min, max:sensor.max};
+
     }
+
   } else {
+
     delete cfg.overrides[key];
+
   }
+
   renderContent();
+
 }
+
+
 
 function saveScenario(scenario){
+
   const farm = activeFarm(); if(!farm) return;
+
   farm.scenarios[scenario].saved = true;
+
   renderContent();
+
   flashSaved();
+
 }
+
+
 
 function flashSaved(){
+
   const b = document.getElementById('saveFlash');
+
   if(!b) return;
+
   b.style.opacity = 1;
+
   setTimeout(()=>{ if(b) b.style.opacity = 0; }, 1200);
+
 }
+
+
 
 function applyScenario(scenario){
+
   const farm = activeFarm(); if(!farm) return;
+
   if(Object.keys(farm.scenarios[scenario].overrides).length===0){
+
     alert('Configure at least one sensor override before applying this scenario.');
+
     return;
+
   }
+
   farm.activeScenario = scenario;
+
   farm.scenarios[scenario].saved = true;
+
   renderAll();
+
 }
+
+
 
 function deactivateScenario(){
+
   const farm = activeFarm(); if(!farm) return;
+
   farm.activeScenario = null;
+
   renderAll();
+
 }
+
+
 
 function quickSwitchScenario(name){
+
   const farm = activeFarm(); if(!farm) return;
+
   if(name===null){ deactivateScenario(); return; }
+
   const cfg = farm.scenarios[name];
+
   if(!cfg || Object.keys(cfg.overrides).length===0){
+
     // jump to settings to configure it first
+
     state.activeTab = 'settings';
+
     state.openScenario = name;
+
     renderAll();
+
     return;
+
   }
+
   applyScenario(name);
+
 }
+
+
 
 function addCustomScenario(){
+
   const farm = activeFarm(); if(!farm) return;
+
   const name = prompt('Name this scenario (e.g. "Frost Warning", "Pest Outbreak"):');
+
   if(!name || !name.trim()) return;
+
   const clean = name.trim();
+
   if(farm.scenarios[clean]){ alert('A scenario with this name already exists.'); return; }
+
   farm.scenarios[clean] = {overrides:{}, saved:false};
+
   state.openScenario = clean;
+
   renderContent();
+
 }
 
+
+
 function removeScenario(name){
+
   const farm = activeFarm(); if(!farm) return;
+
   if(BASE_SCENARIOS.includes(name)){ alert('Built-in scenarios can be reconfigured but not removed.'); return; }
+
   if(!confirm(`Remove the "${name}" scenario?`)) return;
+
   if(farm.activeScenario===name) farm.activeScenario=null;
+
   delete farm.scenarios[name];
+
   if(state.openScenario===name) state.openScenario=null;
+
   renderAll();
+
 }
+
+
 
 /* ---------------- create-farm overlay ---------------- */
 
+
+
 const PRESETS = [
+
   {id:'tomato', name:'Tomato (Soil + Climate)', desc:'Full sensor set — soil probes + weather/plant layer', sensors:null, icon:'🍅'},
+
   {id:'minimal', name:'Minimal Soil-Only', desc:'Just the 7 actual soil sensors, no virtual layer', sensors:'soil-only', icon:'📟'},
+
   {id:'blank', name:'Blank Layout', desc:'Start with zero sensors, add your own', sensors:'blank', icon:'⬜'},
+
 ];
 
+
+
 function openCreateFarm(){
+
   state.overlay = 'create';
+
   state.createDraft = {
+
     name: 'Farm '+(state.farms.length+1),
+
     field: 'Field '+String.fromCharCode(65+state.farms.length),
+
     crop: 'Tomato',
+
     presetId: 'tomato',
+
   };
+
   renderOverlay();
+
 }
+
+
 
 function closeOverlay(){
+
   state.overlay = null;
+
   state.createDraft = null;
+
   renderOverlay();
+
 }
+
+
 
 function setCreatePreset(id){
+
   state.createDraft.presetId = id;
+
   renderOverlay();
+
 }
+
+
 
 function updateCreateDraftField(field, value){
+
   state.createDraft[field] = value;
+
 }
+
+
 
 async function confirmCreateFarm(){
+
   const d = state.createDraft;
+
   const nameInput = document.getElementById('cfName');
+
   const fieldInput = document.getElementById('cfField');
+
   const cropInput = document.getElementById('cfCrop');
+
   const name = (nameInput ? nameInput.value : d.name).trim() || d.name;
+
   const field = (fieldInput ? fieldInput.value : d.field).trim() || d.field;
+
   const crop = (cropInput ? cropInput.value : d.crop).trim() || d.crop;
 
+
+
   let sensors = null;
+
   if(d.presetId==='soil-only'){
+
     sensors = defaultSensors().filter(s=>s.mode==='actual');
+
   } else if(d.presetId==='blank'){
+
     sensors = [];
+
   } // 'tomato' -> null -> full defaults
 
+
+
   let farmId = null;
+
   try{
+
     const res = await fetch('/farms', {
+
       method: 'POST',
+
       headers: {'Content-Type':'application/json'},
+
       body: JSON.stringify({name, field, crop})
+
     });
+
     if(res.ok){
+
       const data = await res.json();
+
       farmId = data.farm_id;
+
     }
+
   }catch(e){ /* backend unreachable — falls back to a local-only demo farm */ }
 
+
+
   const farm = createFarm(name, false, {id: farmId || undefined, sensors, meta:{field, crop, plantingDate:new Date().toISOString().slice(0,10), daysSincePlanting:0, growthStage:'Seedling'}});
+
   state.farms.push(farm);
+
   state.activeFarmId = farm.id;
+
   state.activeTab = 'dashboard';
+
   startFarmTimers(farm);
+
   closeOverlay();
+
   renderAll();
+
 }
+
+
 
 function renderOverlay(){
+
   const root = document.getElementById('overlayRoot');
+
   if(state.overlay!=='create' || !state.createDraft){ root.innerHTML=''; return; }
+
   const d = state.createDraft;
+
   root.innerHTML = `
+
     <div class="overlay" onclick="if(event.target===this) closeOverlay()">
+
       <div class="create-panel">
+
         <div class="create-head">
+
           <h2>🌾 Create Farm</h2>
+
           <button class="ghost" onclick="closeOverlay()">✕ Close</button>
+
         </div>
+
         <div class="create-body">
+
           <div class="create-step-label">Farm details</div>
+
           <div style="margin-bottom:16px;">
+
             <label>Farm / layout name</label>
+
             <input type="text" id="cfName" value="${d.name}">
-          </div>
-          <div class="form-row-2" style="margin-bottom:18px;">
-            <div><label>Field</label><input type="text" id="cfField" value="${d.field}"></div>
-            <div><label>Crop</label><input type="text" id="cfCrop" value="${d.crop}"></div>
+
           </div>
 
-          <div class="create-step-label">Starting sensor set</div>
-          <div class="preset-grid">
-            ${PRESETS.map(p=>`
-              <div class="preset-card ${d.presetId===p.id?'selected':''}" onclick="setCreatePreset('${p.id}')">
-                <div class="pname">${p.icon} ${p.name}</div>
-                <div class="pmeta">${p.desc}</div>
-              </div>
-            `).join('')}
+          <div class="form-row-2" style="margin-bottom:18px;">
+
+            <div><label>Field</label><input type="text" id="cfField" value="${d.field}"></div>
+
+            <div><label>Crop</label><input type="text" id="cfCrop" value="${d.crop}"></div>
+
           </div>
+
+
+
+          <div class="create-step-label">Starting sensor set</div>
+
+          <div class="preset-grid">
+
+            ${PRESETS.map(p=>`
+
+              <div class="preset-card ${d.presetId===p.id?'selected':''}" onclick="setCreatePreset('${p.id}')">
+
+                <div class="pname">${p.icon} ${p.name}</div>
+
+                <div class="pmeta">${p.desc}</div>
+
+              </div>
+
+            `).join('')}
+
+          </div>
+
           <div class="helper-text">You can add, remove, or change any sensor's range after creating the farm — from Settings. You'll also be able to configure Flood, Drought, Heat Stroke, Excessive Cold, or add your own custom scenarios for this farm.</div>
+
         </div>
+
         <div class="create-foot">
+
           <button class="ghost" onclick="closeOverlay()">Cancel</button>
+
           <button class="primary" onclick="confirmCreateFarm()">Create Farm</button>
+
         </div>
+
       </div>
+
     </div>
+
   `;
+
 }
+
+
 
 /* ========================= RENDERING ========================= */
 
+
+
 const CROP_ICONS = {tomato:'🍅', wheat:'🌾', rice:'🌾', corn:'🌽', maize:'🌽', cotton:'☁️', potato:'🥔', onion:'🧅', chili:'🌶️', chilli:'🌶️', sugarcane:'🎋', soybean:'🫘', mango:'🥭', banana:'🍌'};
+
 function cropIcon(crop){
+
   if(!crop) return '🌱';
+
   const k = crop.trim().toLowerCase();
+
   return CROP_ICONS[k] || '🌱';
+
 }
+
+
 
 function renderAll(){ renderSidebar(); renderContent(); renderOverlay(); }
 
+
+
 function renderSidebar(){
+
   document.querySelectorAll('.side-nav-btn').forEach(b=>b.classList.toggle('active', b.dataset.tab===state.activeTab));
+
   const list = document.getElementById('farmList');
+
   list.innerHTML = state.farms.map(f=>{
+
     const activeSensors = f.sensors.length;
+
     const live = f.activeScenario;
+
     const color = live ? scenarioColor(live, f) : null;
+
     return `
+
       <div class="farm-item ${f.id===state.activeFarmId?'active':''}" onclick="selectFarm('${f.id}')">
+
         <div class="farm-item-row">
+
           <div class="farm-item-name"><span class="farm-item-icon">${cropIcon(f.crop)}</span>${f.name}</div>
+
           <div class="farm-item-actions">
+
             <button class="icon-btn" title="Duplicate" onclick="event.stopPropagation();duplicateFarm('${f.id}')">⧉</button>
+
             <button class="icon-btn" title="Remove" onclick="event.stopPropagation();removeFarm('${f.id}')">✕</button>
+
           </div>
+
         </div>
+
         <div class="farm-item-meta">${f.crop || ''} · ${activeSensors} sensors</div>
+
         ${live ? `<span class="scenario-pill-mini" style="background:${color}22;color:${color}"><span class="dotsm" style="background:${color}"></span>${live}</span>` : ''}
+
       </div>
+
     `;
+
   }).join('') || '<div class="empty-state" style="margin:8px 4px;">No farms yet. Click "+ Create Farm" below.</div>';
+
 }
+
+
 
 function rangeBar(sensor, override){
+
   const min = override ? override.min : sensor.min;
+
   const max = override ? override.max : sensor.max;
+
   const pct = clamp(((sensor.value-min)/((max-min)||1))*100, 0, 100);
+
   const cls = override ? 'overridden' : sensor.mode;
+
   return `
+
     <div class="rangebar ${cls}">
+
       <div class="rangebar-track">
+
         <div class="rangebar-fill" style="width:${pct}%"></div>
+
         <div class="rangebar-marker" style="left:${pct}%"></div>
+
       </div>
+
       <div class="rangebar-labels"><span>${fmt(min,sensor.decimals)}</span><span>${fmt(max,sensor.decimals)} ${sensor.unit}</span></div>
+
     </div>
+
   `;
+
 }
+
+
 
 function sensorRow(sensor, farm){
+
   const override = activeOverrideFor(farm, sensor.key);
+
   const stale = sensor.mode==='actual' && farm.actualStale && !override;
+
   return `
+
     <div class="sensor-row">
+
       <div class="sensor-row-top">
+
         <div>
+
           <div class="sensor-name">${sensor.name}${override ? `<span class="override-flag">${farm.activeScenario}</span>`:''}</div>
+
           <div class="sensor-meta">updated ${timeAgo(Date.now())}${stale?'<span class="stale-tag"> · using last known value</span>':''}</div>
+
         </div>
+
         <div class="sensor-value">${fmt(sensor.value, sensor.decimals)}<span class="unit">${sensor.unit}</span></div>
+
       </div>
+
       ${rangeBar(sensor, override)}
+
     </div>
+
   `;
+
 }
+
+
 
 function renderContent(){
+
   const farm = activeFarm();
+
   const content = document.getElementById('content');
+
   document.getElementById('farmTitle').innerHTML = farm ? `<span class="title-icon">${cropIcon(farm.crop)}</span>${farm.name}` : 'No farm selected';
+
   document.getElementById('farmSub').textContent = farm
+
     ? `${farm.field || ''}${farm.field && farm.crop ? ' · ' : ''}${farm.crop || ''}${farm.activeScenario ? ' · Scenario: '+farm.activeScenario : (farm.field||farm.crop ? ' · Normal conditions' : 'Normal conditions')}`
+
     : 'Create a farm to get started';
 
+
+
   document.querySelectorAll('.tab-btn').forEach(b=>b.classList.toggle('active', b.dataset.tab===state.activeTab));
+
   document.querySelectorAll('.side-nav-btn').forEach(b=>b.classList.toggle('active', b.dataset.tab===state.activeTab));
 
+
+
   if(!farm){
+
     content.innerHTML = `<div class="empty-state"><span class="big">No farm yet</span>Click "+ Create Farm" in the left sidebar to set up your first digital twin.</div>`;
+
     return;
+
   }
+
+
 
   if(state.activeTab==='dashboard') content.innerHTML = renderDashboard(farm);
+
   else content.innerHTML = renderSettings(farm);
+
 }
+
+
 
 function renderScenarioBar(farm){
+
   const allNames = [...BASE_SCENARIOS, ...Object.keys(farm.scenarios).filter(n=>!BASE_SCENARIOS.includes(n))];
+
   const pills = allNames.map(name=>{
+
     const color = scenarioColor(name, farm);
+
     const isActive = farm.activeScenario===name;
+
     return `<button class="scenario-pill-btn ${isActive?'active':''}" style="${isActive?'':`border-color:${color}55`}" onclick="quickSwitchScenario('${name}')">
+
       <span class="pill-icon">${scenarioIcon(name)}</span>${name}
+
     </button>`;
+
   }).join('');
+
   return `
+
     <div class="scenario-bar">
+
       <button class="scenario-pill-btn ${!farm.activeScenario?'active':''}" onclick="quickSwitchScenario(null)"><span class="pill-icon">🌤️</span>Normal</button>
+
       ${pills}
+
       <button class="scenario-pill-btn add-custom" onclick="addCustomScenario()">+ Custom scenario</button>
+
     </div>
+
   `;
+
 }
+
+
 
 function renderDashboard(farm){
+
   let banner = '';
+
   if(farm.activeScenario){
+
     const overridden = Object.keys(farm.scenarios[farm.activeScenario].overrides).length;
+
     banner = `<div class="banner amber"><span class="banner-dot"></span>${farm.activeScenario} scenario is live — ${overridden} sensor(s) showing injected values for this farm.
+
       <button class="ghost" style="margin-left:auto" onclick="deactivateScenario()">Back to normal</button></div>`;
+
   } else if(farm.actualStale){
+
     banner = `<div class="banner stale"><span class="banner-dot"></span>Live sensor feed unreachable — showing last known readings.</div>`;
+
   }
+
+
 
   const allActual = farm.sensors.filter(s=>s.mode==='actual');
+
   const allVirtual = farm.sensors.filter(s=>s.mode==='virtual');
 
+
+
   let actualSensors = allActual;
+
   let virtualSensors = allVirtual;
+
   if(farm.activeScenario){
+
     const cfg = farm.scenarios[farm.activeScenario];
+
     const inScenario = s => cfg && cfg.overrides && cfg.overrides[s.key];
+
     actualSensors = allActual.filter(inScenario);
+
     virtualSensors = allVirtual.filter(inScenario);
+
   }
+
+
 
   const imgBox = farm.image
+
     ? `<div class="img-upload-box" onclick="viewImage()"><img src="${farm.image.dataUrl}" alt="Farm plant photo"></div>
+
        <div class="img-meta"><b>Image uploaded</b>${new Date(farm.image.ts).toLocaleString()}</div>`
+
     : `<div class="img-upload-box" onclick="triggerImageUpload()"><span class="plus">+</span></div>
+
        <div class="img-meta">No image yet — click to upload a plant or drone photo</div>`;
 
+
+
   return `
+
     ${renderScenarioBar(farm)}
+
     ${banner}
 
-    <div class="twin-section">
-      <div class="twin-section-head">
-        <span class="dot actual"></span><span class="twin-section-title">📟 Actual Data</span>
-        <span class="twin-section-count">${actualSensors.length}${farm.activeScenario ? ' in scenario' : ' sensors'}</span>
-      </div>
-      <div class="twin-cols">
-        <div class="panel">
-          <div class="panel-head"><span class="panel-title">📷 Field Photo</span></div>
-          <div class="panel-body">
-            <input type="file" id="hiddenImgInput" accept="image/*" style="display:none" onchange="handleImageUpload(event)">
-            ${imgBox}
-          </div>
-        </div>
-        <div class="panel">
-          <div class="panel-head"><span class="panel-title">🌱 Soil Probe Readings</span><span class="panel-count" style="margin-left:auto;font-size:11px;color:var(--ink-soft);">live</span></div>
-          <div class="panel-body">
-            ${actualSensors.map(s=>sensorRow(s,farm)).join('') || (farm.activeScenario ? `<div class="empty-state">No actual sensors are included in the <b>${farm.activeScenario}</b> scenario.</div>` : '<div class="empty-state">No actual sensors configured for this farm.</div>')}
-          </div>
-        </div>
-      </div>
-    </div>
+
 
     <div class="twin-section">
+
       <div class="twin-section-head">
-        <span class="dot virtual"></span><span class="twin-section-title">🧬 Virtual Data</span>
-        <span class="twin-section-count">${virtualSensors.length}${farm.activeScenario ? ' in scenario' : ' sensors'}</span>
+
+        <span class="dot actual"></span><span class="twin-section-title">📟 Actual Data</span>
+
+        <span class="twin-section-count">${actualSensors.length}${farm.activeScenario ? ' in scenario' : ' sensors'}</span>
+
       </div>
-      <div class="panel">
-        <div class="panel-head"><span class="panel-title">🌤️ Simulated Weather, Plant &amp; Soil-Chemistry</span></div>
-        <div class="panel-body">
-          <div class="sensor-grid">
-            ${virtualSensors.map(s=>sensorRow(s,farm)).join('') || (farm.activeScenario ? `<div class="empty-state">No virtual sensors are included in the <b>${farm.activeScenario}</b> scenario.</div>` : '<div class="empty-state">No virtual sensors configured for this farm.</div>')}
+
+      <div class="twin-cols">
+
+        <div class="panel">
+
+          <div class="panel-head"><span class="panel-title">📷 Field Photo</span></div>
+
+          <div class="panel-body">
+
+            <input type="file" id="hiddenImgInput" accept="image/*" style="display:none" onchange="handleImageUpload(event)">
+
+            ${imgBox}
+
           </div>
+
         </div>
+
+        <div class="panel">
+
+          <div class="panel-head"><span class="panel-title">🌱 Soil Probe Readings</span><span class="panel-count" style="margin-left:auto;font-size:11px;color:var(--ink-soft);">live</span></div>
+
+          <div class="panel-body">
+
+            ${actualSensors.map(s=>sensorRow(s,farm)).join('') || (farm.activeScenario ? `<div class="empty-state">No actual sensors are included in the <b>${farm.activeScenario}</b> scenario.</div>` : '<div class="empty-state">No actual sensors configured for this farm.</div>')}
+
+          </div>
+
+        </div>
+
       </div>
+
     </div>
+
+
+
+    <div class="twin-section">
+
+      <div class="twin-section-head">
+
+        <span class="dot virtual"></span><span class="twin-section-title">🧬 Virtual Data</span>
+
+        <span class="twin-section-count">${virtualSensors.length}${farm.activeScenario ? ' in scenario' : ' sensors'}</span>
+
+      </div>
+
+      <div class="panel">
+
+        <div class="panel-head"><span class="panel-title">🌤️ Simulated Weather, Plant &amp; Soil-Chemistry</span></div>
+
+        <div class="panel-body">
+
+          <div class="sensor-grid">
+
+            ${virtualSensors.map(s=>sensorRow(s,farm)).join('') || (farm.activeScenario ? `<div class="empty-state">No virtual sensors are included in the <b>${farm.activeScenario}</b> scenario.</div>` : '<div class="empty-state">No virtual sensors configured for this farm.</div>')}
+
+          </div>
+
+        </div>
+
+      </div>
+
+    </div>
+
   `;
+
 }
+
+
 
 function renderSettings(farm){
+
   const lib = sensorLibrary(farm);
+
   const libCount = lib.actual.length + lib.virtual.length;
 
+
+
   const libGroup = (title, items, modeClass) => `
+
     <div class="lib-group">
+
       <div class="lib-group-head"><span class="mode-badge ${modeClass}">${title}</span><span class="lib-group-count">${items.length}</span></div>
+
       ${items.length ? `<div class="lib-chip-list">
+
         ${items.map(s=>`
+
           <div class="lib-chip">
+
             <span class="lib-chip-icon">${sensorIcon(s)}</span>
+
             <span class="lib-chip-info">
+
               <span class="lib-chip-name">${s.name}</span>
+
               <span class="lib-chip-meta">${s.unit} · ${fmt(s.min,s.decimals)}–${fmt(s.max,s.decimals)}</span>
+
             </span>
+
             <button class="icon-btn lib-add-btn" title="Add to ${farm.name}" onclick="addSensorFromLibrary('${s.key}')">+ Add</button>
+
           </div>
+
         `).join('')}
+
       </div>` : `<div class="lib-empty">All ${title.toLowerCase()} sensors from other farms are already on this farm.</div>`}
+
     </div>
+
   `;
 
+
+
   return `
+
     <div class="settings-head-row">
+
       <div class="farm-rename">
+
         <span class="farm-rename-icon">🌾</span>
+
         <input type="text" value="${farm.name}" onchange="renameFarm('${farm.id}', this.value)">
+
       </div>
+
       <button id="saveFlash" class="ghost" style="opacity:0;color:var(--ok);transition:opacity .3s;pointer-events:none;">✓ Saved</button>
+
     </div>
+
+
 
     <div class="settings-grid">
-      <div class="panel">
-        <div class="panel-head"><span class="panel-title">＋ New Sensor</span></div>
-        <div class="panel-body">
-          <div class="add-sensor-form">
-            <div><label>Name</label><input type="text" id="newSensorName" placeholder="e.g. Leaf Wetness"></div>
-            <div class="form-row-2">
-              <div><label>Unit</label><input type="text" id="newSensorUnit" placeholder="%"></div>
-              <div><label>Source</label>
-                <select id="newSensorMode">
-                  <option value="actual">Actual (hardware)</option>
-                  <option value="virtual" selected>Virtual (simulated)</option>
-                </select>
-              </div>
-            </div>
-            <div class="form-row-2">
-              <div><label>Min</label><input type="number" id="newSensorMin" step="any"></div>
-              <div><label>Max</label><input type="number" id="newSensorMax" step="any"></div>
-            </div>
-            <button class="primary" onclick="addSensorFromForm()">+ Create Sensor</button>
-          </div>
-        </div>
-      </div>
 
       <div class="panel">
-        <div class="panel-head"><span class="panel-title">📋 All Sensors — ${farm.name}</span><span class="panel-count" style="margin-left:auto;font-size:11px;color:var(--ink-soft);">${farm.sensors.length}</span></div>
-        <div class="panel-body" style="max-height:340px;overflow-y:auto;">
-          <div class="sensor-table-row head">
-            <div>Name</div><div>Source</div><div>Unit</div><div>Min</div><div>Max</div><div></div>
-          </div>
-          ${farm.sensors.map(s=>`
-            <div class="sensor-table-row">
-              <div class="sensor-table-name"><span class="lib-chip-icon sm">${sensorIcon(s)}</span>${s.name}</div>
-              <div><span class="mode-badge ${s.mode}" style="cursor:pointer" onclick="toggleSensorMode('${s.key}')">${s.mode}</span></div>
-              <div>${s.unit}</div>
-              <div><input type="number" step="any" value="${s.min}" onchange="updateSensorRange('${s.key}','min',this.value)"></div>
-              <div><input type="number" step="any" value="${s.max}" onchange="updateSensorRange('${s.key}','max',this.value)"></div>
-              <div><button class="icon-btn danger-btn" onclick="removeSensor('${s.key}')">Remove</button></div>
+
+        <div class="panel-head"><span class="panel-title">＋ New Sensor</span></div>
+
+        <div class="panel-body">
+
+          <div class="add-sensor-form">
+
+            <div><label>Name</label><input type="text" id="newSensorName" placeholder="e.g. Leaf Wetness"></div>
+
+            <div class="form-row-2">
+
+              <div><label>Unit</label><input type="text" id="newSensorUnit" placeholder="%"></div>
+
+              <div><label>Source</label>
+
+                <select id="newSensorMode">
+
+                  <option value="actual">Actual (hardware)</option>
+
+                  <option value="virtual" selected>Virtual (simulated)</option>
+
+                </select>
+
+              </div>
+
             </div>
-          `).join('') || '<div class="empty-state">No sensors yet — add one on the left.</div>'}
+
+            <div class="form-row-2">
+
+              <div><label>Min</label><input type="number" id="newSensorMin" step="any"></div>
+
+              <div><label>Max</label><input type="number" id="newSensorMax" step="any"></div>
+
+            </div>
+
+            <button class="primary" onclick="addSensorFromForm()">+ Create Sensor</button>
+
+          </div>
+
         </div>
+
       </div>
+
+
+
+      <div class="panel">
+
+        <div class="panel-head"><span class="panel-title">📋 All Sensors — ${farm.name}</span><span class="panel-count" style="margin-left:auto;font-size:11px;color:var(--ink-soft);">${farm.sensors.length}</span></div>
+
+        <div class="panel-body" style="max-height:340px;overflow-y:auto;">
+
+          <div class="sensor-table-row head">
+
+            <div>Name</div><div>Source</div><div>Unit</div><div>Min</div><div>Max</div><div></div>
+
+          </div>
+
+          ${farm.sensors.map(s=>`
+
+            <div class="sensor-table-row">
+
+              <div class="sensor-table-name"><span class="lib-chip-icon sm">${sensorIcon(s)}</span>${s.name}</div>
+
+              <div><span class="mode-badge ${s.mode}" style="cursor:pointer" onclick="toggleSensorMode('${s.key}')">${s.mode}</span></div>
+
+              <div>${s.unit}</div>
+
+              <div><input type="number" step="any" value="${s.min}" onchange="updateSensorRange('${s.key}','min',this.value)"></div>
+
+              <div><input type="number" step="any" value="${s.max}" onchange="updateSensorRange('${s.key}','max',this.value)"></div>
+
+              <div><button class="icon-btn danger-btn" onclick="removeSensor('${s.key}')">Remove</button></div>
+
+            </div>
+
+          `).join('') || '<div class="empty-state">No sensors yet — add one on the left.</div>'}
+
+        </div>
+
+      </div>
+
     </div>
+
+
 
     <div class="panel lib-panel">
+
       <div class="panel-head">
+
         <span class="panel-title">🗂 Sensor Library — from all farms</span>
+
         <span class="panel-count" style="margin-left:auto;font-size:11px;color:var(--ink-soft);">${libCount} available</span>
+
       </div>
+
       <div class="panel-body">
+
         <div class="helper-text" style="margin-bottom:14px;">Every sensor type that exists on any of your farms shows up here. Add any of them straight onto <b>${farm.name}</b> instead of recreating them from scratch.</div>
+
         ${libCount ? `<div class="lib-groups">
+
           ${libGroup('Actual', lib.actual, 'actual')}
+
           ${libGroup('Virtual', lib.virtual, 'virtual')}
+
         </div>` : `<div class="empty-state">No other sensor types yet — create farms or sensors elsewhere and they'll appear here for reuse.</div>`}
+
       </div>
+
     </div>
+
+
 
     ${renderScenarioConfigSection(farm)}
+
   `;
+
 }
+
+
 
 function renderScenarioConfigSection(farm){
+
   const allNames = [...BASE_SCENARIOS, ...Object.keys(farm.scenarios).filter(n=>!BASE_SCENARIOS.includes(n))];
+
   const cards = allNames.map(name=>{
+
     const cfg = farm.scenarios[name];
+
     const color = scenarioColor(name, farm);
+
     const overrideCount = Object.keys(cfg.overrides).length;
+
     const isLive = farm.activeScenario===name;
+
     const isOpen = state.openScenario===name;
+
     const isCustom = !BASE_SCENARIOS.includes(name);
+
     return `
+
       <div class="scenario-card ${isOpen?'open':''} ${isLive?'live':''}" style="border-top-color:${color}" onclick="openScenario('${name}')">
+
         <div class="scenario-card-title"><span class="card-icon">${scenarioIcon(name)}</span>${name}</div>
+
         <div class="scenario-card-status">${overrideCount ? overrideCount+' sensor(s) configured' : 'Not configured'}${isCustom?' · custom':''}</div>
+
         ${isLive ? '<span class="live-badge">Active now</span>' : ''}
+
       </div>
+
     `;
+
   }).join('');
 
+
+
   let editor = '';
+
   if(state.openScenario && farm.scenarios[state.openScenario]){
+
     const name = state.openScenario;
+
     const cfg = farm.scenarios[name];
+
     const isLive = farm.activeScenario===name;
+
     const isCustom = !BASE_SCENARIOS.includes(name);
+
     editor = `
+
       <div class="scenario-editor">
+
         <div class="scenario-editor-head">
+
           <div>
+
             <h3>${name} configuration</h3>
+
             <div class="helper-text">Tick a sensor to override it whenever ${name} is applied. Every time this scenario runs, those sensors generate values inside the range you set here — everything else keeps behaving normally.</div>
+
           </div>
+
           <div class="scenario-editor-actions">
+
             ${isCustom ? `<button class="danger-btn" onclick="removeScenario('${name}')">Delete scenario</button>` : ''}
+
             <button onclick="saveScenario('${name}')">Save configuration</button>
+
             ${isLive
+
               ? `<button class="danger-btn" onclick="deactivateScenario()">Stop scenario</button>`
+
               : `<button class="primary" onclick="applyScenario('${name}')">Apply scenario</button>`}
+
           </div>
+
         </div>
+
         ${farm.sensors.map(s=>{
+
           const ov = cfg.overrides[s.key];
+
           const checked = !!ov;
+
           const min = ov ? ov.min : '';
+
           const max = ov ? ov.max : '';
+
           return `
+
             <div class="override-row">
+
               <div>
+
                 <input type="checkbox" style="width:auto;display:inline-block;margin-right:8px;" ${checked?'checked':''} onchange="toggleOverrideActive('${name}','${s.key}',this.checked)">
+
                 <span class="sname">${s.name} <span style="color:var(--ink-soft)">(${s.unit})</span></span>
+
               </div>
+
               <input type="number" step="any" placeholder="min" value="${min}" ${checked?'':'disabled'} onchange="updateOverride('${name}','${s.key}','min',this.value)">
+
               <input type="number" step="any" placeholder="max" value="${max}" ${checked?'':'disabled'} onchange="updateOverride('${name}','${s.key}','max',this.value)">
+
             </div>
+
           `;
+
         }).join('') || '<div class="empty-state">Add sensors first to configure this scenario.</div>'}
+
       </div>
+
     `;
+
   }
 
+
+
   return `
+
     <div class="panel-head" style="background:transparent;border:none;padding:0 0 10px;">
+
       <span class="panel-title" style="font-size:13px;">Scenarios for ${farm.name}</span>
+
     </div>
+
     <div class="scenario-grid">${cards}<div class="scenario-card custom-card" onclick="addCustomScenario()">+ Add custom scenario</div></div>
+
     ${editor}
+
   `;
+
 }
+
+
 
 /* ---------------- init ---------------- */
 
+
+
 (async function init(){
+
   const farm1 = createFarm('Farm 1', true);
+
   state.farms.push(farm1);
+
   state.activeFarmId = farm1.id;
+
   startFarmTimers(farm1);
 
+
+
   try{
+
     const res = await fetch('/farms');
+
     if(res.ok){
+
       const data = await res.json();
+
       (data.farms || []).forEach(f=>{
+
         const farm = createFarm(f.name || f.farm_id, false, {
+
           id: f.farm_id,
+
           meta: {
+
             field: f.field, crop: f.crop,
+
             plantingDate: new Date().toISOString().slice(0,10),
+
             daysSincePlanting: 0, growthStage: 'Seedling'
+
           }
+
         });
+
         state.farms.push(farm);
+
         startFarmTimers(farm);
+
       });
+
     }
+
   }catch(e){ /* backend unreachable — Farm 1 still works standalone */ }
 
+
+
   document.querySelector('[data-tab="dashboard"].tab-btn')?.classList.add('active');
+
   document.querySelector('[data-tab="dashboard"].side-nav-btn')?.classList.add('active');
+
   renderAll();
+
 })();
 
+
+
 </script>
+
 </body>
+
 </html>
