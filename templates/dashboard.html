@@ -226,8 +226,6 @@ setInterval(
 
 
 
-
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -338,6 +336,28 @@ setInterval(
   }
   .brand-text{font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:13.5px;line-height:1.25;}
   .brand-text span{display:block;font-size:10.5px;color:var(--ink-soft);font-weight:500;font-family:'Inter',sans-serif;}
+
+  /* sensor registry */
+  .sensor-page{padding:20px 24px;}
+  .sensor-page h2{font-size:16px;margin-bottom:4px;}
+  .sensor-page .sp-sub{color:var(--ink-soft);font-size:13px;margin-bottom:18px;}
+  .sensor-section{margin-bottom:28px;}
+  .sensor-section-label{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-soft);margin-bottom:8px;}
+  .sensor-table{width:100%;border-collapse:collapse;}
+  .sensor-table th{font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-soft);padding:6px 10px;text-align:left;border-bottom:1px solid var(--line);}
+  .sensor-table td{padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:middle;font-size:13px;}
+  .sensor-table tr:last-child td{border-bottom:none;}
+  .sensor-table tr.is-new{background:var(--amber-soft);}
+  .new-pill{display:inline-block;background:var(--amber);color:#fff;font-size:10px;font-weight:700;border-radius:4px;padding:1px 6px;margin-left:6px;vertical-align:middle;letter-spacing:.04em;}
+  .sensor-id{font-family:'IBM Plex Mono',monospace;font-weight:600;font-size:12px;color:var(--ink-soft);}
+  .inline-rename{display:flex;gap:6px;align-items:center;}
+  .inline-rename input{border:1px solid var(--line);border-radius:6px;padding:4px 8px;font-size:13px;background:var(--surface);color:var(--ink);font-family:'Inter',sans-serif;width:140px;}
+  .inline-rename input:focus{outline:none;border-color:var(--ink);}
+  .sensor-farm-select{border:1px solid var(--line);border-radius:6px;padding:4px 8px;font-size:12px;background:var(--surface);color:var(--ink);font-family:'Inter',sans-serif;}
+  .ack-btn{font-size:11px;padding:3px 8px;border-radius:5px;border:1px solid var(--line);background:var(--surface);cursor:pointer;color:var(--ink-soft);}
+  .ack-btn:hover{background:var(--surface-2);}
+  .save-name-btn{font-size:11px;padding:3px 8px;border-radius:5px;border:none;background:var(--ink);color:#fff;cursor:pointer;}
+  .save-name-btn:hover{opacity:.85;}
 
   .side-nav{display:flex;flex-direction:column;padding:10px;gap:2px;border-bottom:1px solid var(--line);}
   .side-nav-btn{
@@ -612,6 +632,7 @@ setInterval(
 
     <div class="side-nav">
       <button class="side-nav-btn" data-tab="dashboard" onclick="setTab('dashboard')"><span class="ic">🛰️</span>Twin</button>
+      <button class="side-nav-btn" data-tab="sensors" onclick="setTab('sensors')"><span class="ic">📡</span>Sensors</button>
       <button class="side-nav-btn" data-tab="settings" onclick="setTab('settings')"><span class="ic">⚙️</span>Settings</button>
     </div>
 
@@ -634,6 +655,7 @@ setInterval(
       </div>
       <div class="tabs">
         <button class="tab-btn" data-tab="dashboard" onclick="setTab('dashboard')">Twin</button>
+        <button class="tab-btn" data-tab="sensors" onclick="setTab('sensors')">Sensors</button>
         <button class="tab-btn" data-tab="settings" onclick="setTab('settings')">Settings</button>
       </div>
     </div>
@@ -913,7 +935,7 @@ function stopFarmTimers(farm){
 /* ---------------- farm management ---------------- */
 
 function selectFarm(id){ state.activeFarmId = id; state.openScenario=null; renderAll(); }
-function setTab(tab){ state.activeTab = tab; state.openScenario=null; renderAll(); }
+function setTab(tab){ state.activeTab = tab; state.openScenario=null; if(tab==='sensors') loadSensors(); renderAll(); }
 
 function duplicateFarm(id){
   const src = state.farms.find(f=>f.id===id);
@@ -926,11 +948,27 @@ function duplicateFarm(id){
   renderAll();
 }
 
-function removeFarm(id){
+async function removeFarm(id){
   const farm = state.farms.find(f=>f.id===id);
   if(!farm) return;
-  if(!confirm(`Remove "${farm.name}"? This stops its simulation.`)) return;
+  if(!confirm(`Permanently delete "${farm.name}"? This removes it from Ditto and cannot be undone.`)) return;
+
   stopFarmTimers(farm);
+
+  if(!farm.legacy && !farm.isPlaceholder){
+    try{
+      const res = await fetch(`/farms/${farm.id}`, { method: 'DELETE' });
+      if(!res.ok){
+        const body = await res.json().catch(()=>({}));
+        alert('Could not delete farm on the server: ' + (body.detail || res.status));
+        return; // don't remove locally if the server-side delete failed
+      }
+    }catch(e){
+      alert('Could not reach the backend to delete this farm. It has not been removed.');
+      return;
+    }
+  }
+
   state.farms = state.farms.filter(f=>f.id!==id);
   if(state.activeFarmId===id){
     state.activeFarmId = state.farms[0] ? state.farms[0].id : null;
@@ -1288,13 +1326,22 @@ function sensorRow(sensor, farm){
 function renderContent(){
   const farm = activeFarm();
   const content = document.getElementById('content');
+
+  document.querySelectorAll('.tab-btn').forEach(b=>b.classList.toggle('active', b.dataset.tab===state.activeTab));
+  document.querySelectorAll('.side-nav-btn').forEach(b=>b.classList.toggle('active', b.dataset.tab===state.activeTab));
+
+  // Sensors tab doesn't require a farm — handle it first
+  if(state.activeTab==='sensors'){
+    document.getElementById('farmTitle').textContent = 'Sensor Registry';
+    document.getElementById('farmSub').textContent = 'All sensors discovered from MQTT — rename and map to farms';
+    content.innerHTML = renderSensors();
+    return;
+  }
+
   document.getElementById('farmTitle').innerHTML = farm ? `<span class="title-icon">${cropIcon(farm.crop)}</span>${farm.name}` : 'No farm selected';
   document.getElementById('farmSub').textContent = farm
     ? `${farm.field || ''}${farm.field && farm.crop ? ' · ' : ''}${farm.crop || ''}${farm.activeScenario ? ' · Scenario: '+farm.activeScenario : (farm.field||farm.crop ? ' · Normal conditions' : 'Normal conditions')}`
     : 'Create a farm to get started';
-
-  document.querySelectorAll('.tab-btn').forEach(b=>b.classList.toggle('active', b.dataset.tab===state.activeTab));
-  document.querySelectorAll('.side-nav-btn').forEach(b=>b.classList.toggle('active', b.dataset.tab===state.activeTab));
 
   if(!farm){
     content.innerHTML = `<div class="empty-state"><span class="big">No farm yet</span>Click "+ Create Farm" in the left sidebar to set up your first digital twin.</div>`;
@@ -1304,6 +1351,155 @@ function renderContent(){
   if(state.activeTab==='dashboard') content.innerHTML = renderDashboard(farm);
   else content.innerHTML = renderSettings(farm);
 }
+
+// ---- sensor registry state & helpers ----
+
+let sensorState = {
+  sensors: [],
+  farms: [],   // [{farm_id, name}] for the map dropdown
+  loading: false
+};
+
+async function loadSensors(){
+  sensorState.loading = true;
+  try{
+    const [sRes, fRes] = await Promise.all([
+      fetch('/sensors'),
+      fetch('/farms')
+    ]);
+    if(sRes.ok) sensorState.sensors = (await sRes.json()).sensors || [];
+    if(fRes.ok) sensorState.farms = (await fRes.json()).farms || [];
+  }catch(e){ console.error('loadSensors:', e); }
+  sensorState.loading = false;
+  if(state.activeTab==='sensors') renderContent();
+}
+
+function renderSensors(){
+  const newSensors = sensorState.sensors.filter(s=>s.isNew);
+  const knownSensors = sensorState.sensors.filter(s=>!s.isNew);
+  const farmOptions = sensorState.farms.map(f=>`<option value="${f.farm_id}">${f.name}</option>`).join('');
+  const totalThings = sensorState.farms.length;
+  const totalSensors = sensorState.sensors.length;
+
+  function sensorRow(s){
+    return `
+    <tr class="${s.isNew ? 'is-new' : ''}">
+      <td>
+        <span class="sensor-id">${s.sensorId}</span>
+        ${s.isNew ? '<span class="new-pill">NEW</span>' : ''}
+      </td>
+      <td class="mono" style="color:var(--ink-soft);font-size:12px;">${s.rawKey || '—'}</td>
+      <td>
+        <div class="inline-rename">
+          <input id="sname_${s.rawKey}" value="${s.name || ''}" placeholder="Sensor name">
+          <button class="save-name-btn" onclick="doRenameSensor('${s.rawKey}')">Save</button>
+        </div>
+      </td>
+      <td>
+        <select class="sensor-farm-select" data-rawkey="${s.rawKey}" onchange="doMapSensor('${s.rawKey}', this.value)">
+          <option value="">— unassigned —</option>
+          ${farmOptions}
+        </select>
+      </td>
+      <td>${s.firstSeen ? s.firstSeen.slice(0,19).replace('T',' ') : '—'}</td>
+      <td>
+        ${s.isNew
+          ? `<button class="ack-btn" onclick="doAckSensor('${s.rawKey}')">Mark seen</button>`
+          : ''}
+      </td>
+    </tr>`;
+  }
+
+  const tableHead = `
+    <table class="sensor-table">
+      <thead><tr>
+        <th>ID</th><th>Raw Key</th><th>Name</th><th>Mapped Farm</th><th>First Seen</th><th></th>
+      </tr></thead>
+      <tbody>`;
+  const tableClose = `</tbody></table>`;
+
+  let html = `<div class="sensor-page">
+    <h2>Sensor Registry</h2>
+    <p class="sp-sub">
+      Things on Ditto: <b>${totalThings}</b> &nbsp;·&nbsp;
+      Sensors discovered: <b>${totalSensors}</b>
+      ${newSensors.length > 0 ? `&nbsp;·&nbsp; <span style="color:var(--amber);font-weight:600;">⬤ ${newSensors.length} new</span>` : ''}
+    </p>`;
+
+  if(sensorState.loading){
+    html += `<div style="color:var(--ink-soft);padding:20px;">Loading sensors…</div>`;
+  } else if(sensorState.sensors.length === 0){
+    html += `<div style="color:var(--ink-soft);padding:20px;">No sensors discovered yet. Start your MQTT pipeline — sensors appear here automatically as Ditto picks them up.</div>`;
+  } else {
+    if(newSensors.length > 0){
+      html += `<div class="sensor-section">
+        <div class="sensor-section-label">🟡 Newly Discovered (${newSensors.length})</div>
+        ${tableHead}${newSensors.map(sensorRow).join('')}${tableClose}
+      </div>`;
+    }
+    if(knownSensors.length > 0){
+      html += `<div class="sensor-section">
+        <div class="sensor-section-label">Known Sensors (${knownSensors.length})</div>
+        ${tableHead}${knownSensors.map(sensorRow).join('')}${tableClose}
+      </div>`;
+    }
+  }
+
+  html += `</div>`;
+
+  // Re-set farm select values after innerHTML render
+  setTimeout(()=>{
+    sensorState.sensors.forEach(s=>{
+      const sel = document.querySelector(`[data-rawkey="${s.rawKey}"]`);
+      if(sel && s.farmId) sel.value = s.farmId;
+    });
+  }, 0);
+
+  return html;
+}
+
+async function doRenameSensor(rawKey){
+  const input = document.getElementById(`sname_${rawKey}`);
+  if(!input) return;
+  const newName = input.value.trim();
+  if(!newName) return;
+  try{
+    const res = await fetch(`/sensors/${rawKey}/rename`, {
+      method: 'PATCH',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({name: newName})
+    });
+    if(res.ok){
+      const s = sensorState.sensors.find(x=>x.rawKey===rawKey);
+      if(s) s.name = newName;
+      input.style.borderColor = 'var(--ok)';
+      setTimeout(()=>{ input.style.borderColor = ''; }, 1500);
+    }
+  }catch(e){ console.error('rename sensor:', e); }
+}
+
+async function doMapSensor(rawKey, farmId){
+  try{
+    await fetch(`/sensors/${rawKey}/map`, {
+      method: 'PATCH',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({farm_id: farmId || null})
+    });
+    const s = sensorState.sensors.find(x=>x.rawKey===rawKey);
+    if(s) s.farmId = farmId || null;
+  }catch(e){ console.error('map sensor:', e); }
+}
+
+async function doAckSensor(rawKey){
+  try{
+    await fetch(`/sensors/${rawKey}/acknowledge`, {method:'POST'});
+    const s = sensorState.sensors.find(x=>x.rawKey===rawKey);
+    if(s) s.isNew = false;
+    if(state.activeTab==='sensors') renderContent();
+  }catch(e){ console.error('ack sensor:', e); }
+}
+
+// ---- end sensor registry ----
 
 function renderScenarioBar(farm){
   const allNames = [...BASE_SCENARIOS, ...Object.keys(farm.scenarios).filter(n=>!BASE_SCENARIOS.includes(n))];
@@ -1558,18 +1754,18 @@ function renderScenarioConfigSection(farm){
 /* ---------------- init ---------------- */
 
 (async function init(){
-  const farm1 = createFarm('Farm 1', true);
-  state.farms.push(farm1);
-  state.activeFarmId = farm1.id;
-  startFarmTimers(farm1);
+  let loadedAny = false;
 
   try{
     const res = await fetch('/farms');
     if(res.ok){
       const data = await res.json();
       (data.farms || []).forEach(f=>{
-        const farm = createFarm(f.name || f.farm_id, false, {
-          id: f.farm_id,
+        // The legacy twin (smartfarm:twin01) now comes back through this
+        // same /farms list like any other farm — no special-casing needed.
+        const isLegacy = f.thing_id === 'smartfarm:twin01';
+        const farm = createFarm(f.name || f.farm_id, isLegacy, {
+          id: isLegacy ? 'legacy' : f.farm_id,
           meta: {
             field: f.field, crop: f.crop,
             plantingDate: new Date().toISOString().slice(0,10),
@@ -1578,9 +1774,25 @@ function renderScenarioConfigSection(farm){
         });
         state.farms.push(farm);
         startFarmTimers(farm);
+        loadedAny = true;
       });
     }
-  }catch(e){ /* backend unreachable — Farm 1 still works standalone */ }
+  }catch(e){ /* backend unreachable */ }
+
+  if(!loadedAny){
+    // Backend unreachable / no farms exist yet in Ditto at all — show a
+    // local-only placeholder so the page isn't blank during development.
+    // This is NEVER pushed to Ditto and disappears the moment /farms
+    // returns real data, so it can't reappear as a ghost on refresh.
+    const placeholder = createFarm('No farms found — check backend connection', true);
+    placeholder.isPlaceholder = true;
+    state.farms.push(placeholder);
+  }
+
+  state.activeFarmId = state.farms[0] ? state.farms[0].id : null;
+
+  // Load sensor registry on startup
+  loadSensors();
 
   document.querySelector('[data-tab="dashboard"].tab-btn')?.classList.add('active');
   document.querySelector('[data-tab="dashboard"].side-nav-btn')?.classList.add('active');
