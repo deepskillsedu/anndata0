@@ -58,7 +58,8 @@ from datetime import datetime
 from app.mongodb_service import (
     actual_sensor_history,
     actual_override_history,
-    virtual_history
+    virtual_history,
+    virtual_sensor_history
 )
 
 
@@ -109,3 +110,26 @@ def save_virtual_change(
     }
 
     virtual_history.insert_one(document)
+
+
+def save_virtual_sensor_history(data, thing_id="smartfarm:twin01"):
+    """
+    Periodic full-feature snapshot of a farm's virtual properties — the
+    direct counterpart to save_actual_sensor_history. Called from
+    history_logger's loop on the same cadence as the actual snapshot.
+
+    Deliberately separate from save_virtual_change(), which logs discrete
+    before/after edit events (one document per changed property, source
+    'dashboard'). Mixing the two shapes into one collection would make
+    every future query have to guess whether a document is a full
+    snapshot or a single-field diff — this keeps that ambiguity from
+    ever existing.
+    """
+
+    document = {
+        "timestamp": datetime.utcnow(),
+        "thingId": thing_id,
+        **data
+    }
+
+    virtual_sensor_history.insert_one(document)
