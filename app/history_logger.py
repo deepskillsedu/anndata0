@@ -1,114 +1,12 @@
-# import time
-# import requests
-
-# from app.ditto_reader import get_actual, thing_id_for_farm, thing_exists
-# from app.ditto_writer import DITTO_BASE_URL, AUTH, MERGE_HEADERS
-# from app.farm_registry import list_farm_thing_ids
-# from app.sensor_registry import get_all_sensors, unmap_sensors_for_farm
-# from app.history_service import save_actual_sensor_history
-
-
-# def sync_real_sensors_to_farms():
-#     """For every catalog sensor with source == 'real' and a farmId set,
-#     pulls that device's latest readings (written by the Ditto mapper to
-#     smartfarm:{deviceId}/features/{sensorType}/properties as
-#     {readings: {...}, lastSeen: ...}) and forwards them into the mapped
-#     farm's actual.properties."""
-#     try:
-#         sensors = get_all_sensors()
-#     except Exception as e:
-#         print("sync: could not read sensor catalog:", e)
-#         return
-
-#     for s in sensors:
-#         if s["source"] != "real" or not s.get("farmId"):
-#             continue
-
-#         device_id = s["deviceId"] or s["key"]
-#         device_thing_id = f"smartfarm:{device_id}"
-#         sensor_type = s.get("sensorType")
-#         if not sensor_type:
-#             continue
-
-#         try:
-#             res = requests.get(
-#                 f"{DITTO_BASE_URL}/{device_thing_id}/features/{sensor_type}/properties",
-#                 auth=AUTH
-#             )
-#             if res.status_code == 404:
-#                 continue  # device hasn't published anything yet
-#             res.raise_for_status()
-#             props = res.json()
-#         except Exception as e:
-#             print(f"sync: could not read device {device_thing_id}:", e)
-#             continue
-
-#         readings = props.get("readings", {})
-#         if not readings:
-#             continue
-
-#         clean_readings = {
-#             k: v for k, v in readings.items()
-#             if k not in ("sensorId", "sensorType")
-#         }
-#         if not clean_readings:
-#             continue
-
-#         farm_id = s["farmId"]
-#         farm_thing_id = thing_id_for_farm(farm_id)
-
-#         # defensive: if the mapped farm no longer exists in Ditto (e.g. it
-#         # was deleted before the unmap step ran), clear the stale mapping
-#         # instead of retrying a write that will 404 forever.
-#         if not thing_exists(farm_thing_id):
-#             print(f"sync: farm {farm_thing_id} no longer exists — clearing stale mapping for {device_id}")
-#             try:
-#                 unmap_sensors_for_farm(farm_id)
-#             except Exception as e:
-#                 print(f"sync: could not clear stale mapping for {farm_id}:", e)
-#             continue
-
-#         try:
-#             response = requests.patch(
-#                 f"{DITTO_BASE_URL}/{farm_thing_id}/features/actual/properties",
-#                 auth=AUTH, json=clean_readings, headers=MERGE_HEADERS
-#             )
-#             response.raise_for_status()
-#         except Exception as e:
-#             print(f"sync: could not write farm {farm_thing_id}:", e)
-
-
-# def start_history_logger():
-#     while True:
-#         sync_real_sensors_to_farms()
-
-#         try:
-#             thing_ids = list_farm_thing_ids()
-#         except Exception as e:
-#             print("could not list farms:", e)
-#             thing_ids = []
-
-#         for thing_id in thing_ids:
-#             try:
-#                 actual = get_actual(thing_id)
-#                 save_actual_sensor_history(actual, thing_id=thing_id)
-#                 print(f"history saved: {thing_id}")
-#             except Exception as e:
-#                 print(f"history logger error ({thing_id}):", e)
-
-#         time.sleep(30)
-
-
-
 import random
 import time
 import requests
 
-from app.ditto_reader import get_actual, get_twin, thing_id_for_farm, thing_exists
+from app.ditto_reader import get_actual, get_virtual, get_twin, thing_id_for_farm, thing_exists
 from app.ditto_writer import DITTO_BASE_URL, AUTH, MERGE_HEADERS
 from app.farm_registry import list_farm_thing_ids
 from app.sensor_registry import get_all_sensors, unmap_sensors_for_farm
-from app.history_service import save_actual_sensor_history
+from app.history_service import save_actual_sensor_history, save_virtual_sensor_history, save_raw_sensor_history
 
 
 def _simulated_value(sensor: dict, channel: str):
@@ -205,6 +103,17 @@ def sync_real_sensors_to_farms():
         feature = twin.get("features", {}).get(sensor_type, {})
         readings = feature.get("properties", {}).get("readings", {})
 
+        # Container #1: the EXACT reading off this device, untouched —
+        # saved immediately, before _apply_channel_filters does any
+        # enable/disable substitution or per-farm channel narrowing.
+        # One document per device per sync cycle, regardless of how many
+        # farms it's mapped to.
+        if readings:
+            try:
+                save_raw_sensor_history(readings, device_thing_id)
+            except Exception as e:
+                print(f"history logger error (raw, {device_thing_id}):", e)
+
         # NOTE: previously this skipped the whole sensor if the device had
         # never reported anything (`if not readings: continue`). That also
         # accidentally skipped channels that are switched OFF and only need
@@ -267,8 +176,15 @@ def start_history_logger():
             try:
                 actual = get_actual(thing_id)
                 save_actual_sensor_history(actual, thing_id=thing_id)
-                print(f"history saved: {thing_id}")
             except Exception as e:
-                print(f"history logger error ({thing_id}):", e)
+                print(f"history logger error (actual, {thing_id}):", e)
+ 
+            try:
+                virtual = get_virtual(thing_id)
+                save_virtual_sensor_history(virtual, thing_id=thing_id)
+            except Exception as e:
+                print(f"history logger error (virtual, {thing_id}):", e)
+ 
+            print(f"history saved: {thing_id}")
 
         time.sleep(30)

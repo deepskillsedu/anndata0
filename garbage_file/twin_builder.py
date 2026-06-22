@@ -1,9 +1,9 @@
-from app.farm_model import FARM
-from app.influx_service import get_moisture_history
-from app.trend_engine import calculate_trend
-from app.history_engine import calculate_history_stats
-from app.farm_config import FARM_CONFIG
-from app.data_quality import get_data_quality
+from garbage_file.farm_model import FARM
+from garbage_file.influx_service import get_moisture_history
+from garbage_file.trend_engine import calculate_trend
+from garbage_file.history_engine import calculate_history_stats
+from garbage_file.farm_config import FARM_CONFIG
+from garbage_file.data_quality import get_data_quality
 
 
 def build_twin(

@@ -5,7 +5,7 @@ from typing import Optional, List
 import threading
 import requests
 
-from app.history_reader import get_actual_history
+from app.history_reader import get_actual_history, get_virtual_history, get_raw_sensor_history
 from app.history_logger import start_history_logger
 
 from app.ditto_reader import (
@@ -357,6 +357,22 @@ def update_farm_actual_scoped(farm_id: str, properties: dict):
 @app.get("/farm/{farm_id}/history/actual")
 def farm_actual_history_scoped(farm_id: str):
     return get_actual_history(thing_id_for_farm(farm_id))
+
+@app.get("/farm/{farm_id}/history/virtual")
+def farm_virtual_history_scoped(farm_id: str):
+    return get_virtual_history(thing_id_for_farm(farm_id))
+
+@app.get("/sensors/{key}/history/raw")
+def sensor_raw_history_scoped(key: str):
+    """
+    Exact, untouched readings for one real device sensor (e.g. key='s01' ->
+    device thing 'smartfarm:s01') — straight off the hardware, with no
+    farm-mapping filtering or off-channel simulation applied. This is the
+    ground-truth counterpart to /farm/{farm_id}/history/actual, which shows
+    twin-processed (post-filter, post-simulation) data instead.
+    """
+    return get_raw_sensor_history(f"smartfarm:{key}")
+ 
 
 @app.get("/farm/{farm_id}/scenarios")
 def farm_scenarios_scoped(farm_id: str):
