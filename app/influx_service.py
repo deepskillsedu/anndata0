@@ -1,5 +1,5 @@
 from influxdb_client import InfluxDBClient
-from app.config import settings
+from garbage_file.config import settings
 
 client = InfluxDBClient(
     url=settings.INFLUX_URL,
