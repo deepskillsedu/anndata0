@@ -9,24 +9,14 @@ from app.mongodb_service import (
 )
 
 
-def save_raw_sensor_history(data, device_thing_id):
-    """
-    Exact, untouched snapshot of a real device thing's readings (e.g.
-    smartfarm:s01) — straight off Ditto, BEFORE any farm-mapping filter,
-    channel-enable/disable substitution, or twin merge happens to it.
-    This is the "ground truth" container: what the sensor itself reported.
-
-    device_thing_id has no default on purpose — there's no single sensor
-    every call could fall back to, so callers must always pass the real
-    device thing id (e.g. "smartfarm:s01").
-    """
-
+def save_raw_sensor_history(device_id, sensor_type, readings, thing_id):
     document = {
         "timestamp": datetime.utcnow(),
-        "thingId": device_thing_id,
-        **data
+        "thingId": thing_id,
+        "deviceId": device_id,
+        "sensorType": sensor_type,
+        **{k: v for k, v in readings.items() if k not in ("sensorId", "sensorType")}
     }
-
     raw_sensor_history.insert_one(document)
 
 

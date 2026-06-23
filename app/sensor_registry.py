@@ -1,5 +1,3 @@
-
-
 import requests
 from requests.auth import HTTPBasicAuth
 from datetime import datetime
@@ -253,6 +251,17 @@ def map_sensor_to_farms(key: str, mappings: list) -> dict:
     API layer) is responsible for sending the complete desired set, since
     that's the only way to express "remove farm01" through a PATCH-style
     call without a separate delete endpoint per mapping.
+
+    Each mapping may also carry its own "ranges" ({channel: {min,max}})
+    and "enabled" ({channel: bool}) — PER-FARM overrides for that one
+    channel, on that one farm only. These must be preserved here: this
+    function previously rebuilt each entry as exactly {farmId, channels},
+    which silently dropped ranges/enabled every single time a mapping was
+    added or removed elsewhere (add_sensor_mapping/remove_sensor_mapping
+    both call this to persist their change) — effectively erasing any
+    per-farm override the moment any mapping activity happened for that
+    sensor. They are optional and default to {} so old mappings that
+    never set them keep working unchanged.
     """
     clean = []
     for m in mappings or []:
@@ -262,7 +271,16 @@ def map_sensor_to_farms(key: str, mappings: list) -> dict:
         channels = m.get("channels")
         if channels is not None and not isinstance(channels, list):
             raise ValueError("channels must be a list or null")
-        clean.append({"farmId": farm_id, "channels": channels})
+        ranges = m.get("ranges") or {}
+        enabled = m.get("enabled") or {}
+        if not isinstance(ranges, dict) or not isinstance(enabled, dict):
+            raise ValueError("ranges/enabled must be objects keyed by channel")
+        clean.append({
+            "farmId": farm_id,
+            "channels": channels,
+            "ranges": ranges,
+            "enabled": enabled,
+        })
 
     _replace_feature_property(key, "mappings", clean)
     # keep the legacy single-farmId field roughly in sync for any code
@@ -280,10 +298,21 @@ def add_sensor_mapping(key: str, farm_id: str, channels=None) -> dict:
         raise ValueError("farm_id is required")
     current = _normalize_mappings(get_sensor(key))
 
-    # replace any existing mapping for this farm (re-mapping channels),
-    # otherwise append a new one
+    # If this farm is already mapped, keep its saved ranges/enabled —
+    # only the channel subset is changing here. Without this, re-running
+    # this to adjust which channels go to a farm would silently erase
+    # any per-farm min/max or on/off overrides already saved for it.
+    existing = next((m for m in current if m.get("farmId") == farm_id), None)
+    preserved_ranges = existing.get("ranges") if existing else {}
+    preserved_enabled = existing.get("enabled") if existing else {}
+
     next_mappings = [m for m in current if m.get("farmId") != farm_id]
-    next_mappings.append({"farmId": farm_id, "channels": channels})
+    next_mappings.append({
+        "farmId": farm_id,
+        "channels": channels,
+        "ranges": preserved_ranges,
+        "enabled": preserved_enabled,
+    })
 
     return map_sensor_to_farms(key, next_mappings)
 
@@ -312,9 +341,10 @@ def map_sensor_to_farm(key: str, farm_id) -> dict:
 def set_channel_range(key: str, channel: str, min_value=None, max_value=None) -> dict:
     """
     Store min/max for one channel of a sensor, server-side, in the
-    catalog. This is what makes a min/max edit survive a refresh and
-    apply the same way for every viewer, instead of living only in one
-    browser tab's memory.
+    catalog. This is the SENSOR-WIDE DEFAULT — it only takes effect for a
+    farm mapping that hasn't been given its own per-farm override via
+    set_mapping_channel_range() below. Existing per-farm overrides are
+    never touched or removed by this.
     """
     current = get_sensor(key)
     mins = dict(current.get("min", {}))
@@ -329,13 +359,43 @@ def set_channel_range(key: str, channel: str, min_value=None, max_value=None) ->
     return {"status": "success", "key": key, "channel": channel, "min": mins.get(channel), "max": maxs.get(channel)}
 
 
+def set_mapping_channel_range(key: str, farm_id: str, channel: str, min_value=None, max_value=None) -> dict:
+    """
+    Store min/max for one channel, scoped to ONE specific farm mapping.
+
+    This is what actually fixes "setting min/max on one farm changes it
+    for every farm" — set_channel_range() above writes to the sensor's
+    shared default, used by every mapping that has no override of its
+    own. This function instead writes into that one mapping's own
+    "ranges" dict, which takes priority over the shared default for that
+    farm only — every other farm this sensor is mapped to is completely
+    unaffected, including ones with no override at all (they keep using
+    the shared default exactly as before).
+    """
+    current = _normalize_mappings(get_sensor(key))
+    target = next((m for m in current if m.get("farmId") == farm_id), None)
+    if target is None:
+        raise ValueError(f"sensor '{key}' is not mapped to farm '{farm_id}'")
+
+    ranges = dict(target.get("ranges") or {})
+    one = dict(ranges.get(channel) or {})
+    if min_value is not None:
+        one["min"] = min_value
+    if max_value is not None:
+        one["max"] = max_value
+    ranges[channel] = one
+    target["ranges"] = ranges
+
+    map_sensor_to_farms(key, current)
+    return {"status": "success", "key": key, "farmId": farm_id, "channel": channel, "range": one}
+
+
 def set_channel_enabled(key: str, channel: str, enabled: bool) -> dict:
     """
-    Store the on/off state for one channel, server-side. This is what
-    history_logger's sync loop checks before pushing a reading into any
-    mapped farm — so 'off' actually stops data from moving, instead of
-    just hiding it in one browser tab while the next 30s sync overwrites
-    it with real data again.
+    Store the SENSOR-WIDE DEFAULT on/off state for one channel. Acts as
+    a true kill-switch ("this physical channel is broken/removed") for
+    any farm mapping that hasn't set its own per-farm override below.
+    Existing per-farm overrides are never touched or removed by this.
     """
     current = get_sensor(key)
     enabled_map = dict(current.get("enabled", {}))
@@ -343,6 +403,30 @@ def set_channel_enabled(key: str, channel: str, enabled: bool) -> dict:
 
     _merge_feature(key, {"enabled": enabled_map})
     return {"status": "success", "key": key, "channel": channel, "enabled": enabled_map[channel]}
+
+
+def set_mapping_channel_enabled(key: str, farm_id: str, channel: str, enabled: bool) -> dict:
+    """
+    Turn one channel on/off, scoped to ONE specific farm mapping only.
+
+    This is what actually fixes "switching a sensor off on one farm
+    switches it off everywhere" — set_channel_enabled() above is the
+    shared default, used by any mapping with no override of its own.
+    This writes into that one mapping's own "enabled" dict instead,
+    which takes priority for that farm only. Every other farm this
+    sensor is mapped to keeps receiving real data exactly as before.
+    """
+    current = _normalize_mappings(get_sensor(key))
+    target = next((m for m in current if m.get("farmId") == farm_id), None)
+    if target is None:
+        raise ValueError(f"sensor '{key}' is not mapped to farm '{farm_id}'")
+
+    enabled_map = dict(target.get("enabled") or {})
+    enabled_map[channel] = bool(enabled)
+    target["enabled"] = enabled_map
+
+    map_sensor_to_farms(key, current)
+    return {"status": "success", "key": key, "farmId": farm_id, "channel": channel, "enabled": bool(enabled)}
 
 
 def set_sensor_source(key: str, source: str) -> dict:

@@ -5,7 +5,7 @@ from typing import Optional, List
 import threading
 import requests
 
-from app.history_reader import get_actual_history, get_virtual_history, get_raw_sensor_history
+from app.history_reader import get_actual_history, get_raw_sensor_history
 from app.history_logger import start_history_logger
 
 from app.ditto_reader import (
@@ -42,6 +42,8 @@ from app.sensor_registry import (
     remove_sensor_mapping,
     set_channel_range,
     set_channel_enabled,
+    set_mapping_channel_range,
+    set_mapping_channel_enabled,
     set_sensor_source,
     acknowledge_sensor
 )
@@ -66,7 +68,7 @@ def startup():
         print("Sensor catalog init error:", e)
 
 
-# ---- models ----
+#  models 
 
 class FarmCreate(BaseModel):
     name: str
@@ -77,7 +79,7 @@ class SensorRename(BaseModel):
     name: str
 
 class SensorMap(BaseModel):
-    # back-compat single-farm shape — sets mappings to exactly this one farm
+    # back-compat single-farm shape ... sets mappings to exactly this one farm
     farm_id: Optional[str] = None
 
 class SensorMapping(BaseModel):
@@ -107,7 +109,7 @@ class ChannelEnabled(BaseModel):
     enabled: bool
 
 
-# ---- basic ----
+#basic
 
 @app.get("/")
 def root():
@@ -122,7 +124,7 @@ def health():
     return {"backend": "healthy", "source": "Eclipse Ditto"}
 
 
-# ---- stats ----
+#stats
 
 @app.get("/stats")
 def stats():
@@ -145,7 +147,7 @@ def stats():
     }
 
 
-# ---- sensor registry ----
+# sensor registry
 
 @app.get("/sensors")
 def list_sensors():
@@ -222,27 +224,70 @@ def change_source(key: str, payload: SensorSource):
 @app.patch("/sensors/{key}/range")
 def update_channel_range(key: str, payload: ChannelRange):
     """
-    Save min/max for one channel, server-side, in the sensor catalog.
-    This is the endpoint the Settings/Sensors page Save button calls —
-    it survives refresh and applies the same for every viewer, unlike
-    the old browser-only min/max edit.
+    Save the SENSOR-WIDE DEFAULT min/max for one channel. Applies to any
+    farm mapping that hasn't set its own override via the per-mapping
+    route below. Use /sensors/{key}/mappings/{farm_id}/range instead to
+    set a range for just one farm.
     """
     try:
         return set_channel_range(key, payload.channel, payload.min, payload.max)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.patch("/sensors/{key}/mappings/{farm_id}/range")
+def update_mapping_channel_range(key: str, farm_id: str, payload: ChannelRange):
+    """
+    Save min/max for one channel, scoped to ONE specific farm. This is
+    what the Twin tab's per-farm editor calls — it only ever affects the
+    farm named in the URL; every other farm this sensor is mapped to,
+    including ones with no override at all, is completely unaffected.
+    """
+    try:
+        return set_mapping_channel_range(key, farm_id, payload.channel, payload.min, payload.max)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.patch("/sensors/{key}/enabled")
 def update_channel_enabled(key: str, payload: ChannelEnabled):
     """
-    Turn one channel on/off, server-side. history_logger's sync loop
-    checks this before forwarding a reading into any mapped farm, so
-    'off' actually stops the data instead of just hiding it locally.
+    Turn one channel on/off as the SENSOR-WIDE DEFAULT — a true
+    kill-switch affecting any farm mapping with no override of its own.
+    Use /sensors/{key}/mappings/{farm_id}/enabled instead to turn a
+    channel off for just one farm.
     """
     try:
         return set_channel_enabled(key, payload.channel, payload.enabled)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.patch("/sensors/{key}/mappings/{farm_id}/enabled")
+def update_mapping_channel_enabled(key: str, farm_id: str, payload: ChannelEnabled):
+    """
+    Turn one channel on/off, scoped to ONE specific farm. This is what
+    the Twin tab's on/off switch calls — switching it off here only
+    affects the farm named in the URL; every other farm this sensor is
+    mapped to keeps receiving real data exactly as before.
+    """
+    try:
+        return set_mapping_channel_enabled(key, farm_id, payload.channel, payload.enabled)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/sensors/{key}/history/raw")
+def sensor_raw_history(key: str, limit: int = 100):
+    """
+    Container 1 read-back: exactly what this device itself reported,
+    snapshot every ~30s, independent of any farm it is or isn't mapped
+    to. Use /farm/{farm_id}/history/actual instead for container 2 —
+    what a specific farm ended up seeing after mapping/filtering.
+    """
+    sensor = get_sensor(key)
+    device_id = sensor.get("deviceId", key) if sensor else key
+    return {"deviceId": device_id, "history": get_raw_sensor_history(device_id, limit)}
 
 @app.post("/sensors/{key}/acknowledge")
 def ack_sensor(key: str):
@@ -252,7 +297,7 @@ def ack_sensor(key: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# ---- farm management ----
+#farm management 
 
 @app.post("/farms")
 def create_farm(payload: FarmCreate):
@@ -283,12 +328,6 @@ def delete_farm(farm_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-
-# ---- farm-scoped ----
-# No "legacy" farm anymore — every route below requires a real farm_id
-# that maps to a thing actually created via POST /farms. A bad/deleted
-# farm_id now returns a clean 404 instead of either crashing or
-# silently falling back to some default thing.
 
 @app.get("/farm/{farm_id}/twin")
 def farm_twin_scoped(farm_id: str):
@@ -357,22 +396,6 @@ def update_farm_actual_scoped(farm_id: str, properties: dict):
 @app.get("/farm/{farm_id}/history/actual")
 def farm_actual_history_scoped(farm_id: str):
     return get_actual_history(thing_id_for_farm(farm_id))
-
-@app.get("/farm/{farm_id}/history/virtual")
-def farm_virtual_history_scoped(farm_id: str):
-    return get_virtual_history(thing_id_for_farm(farm_id))
-
-@app.get("/sensors/{key}/history/raw")
-def sensor_raw_history_scoped(key: str):
-    """
-    Exact, untouched readings for one real device sensor (e.g. key='s01' ->
-    device thing 'smartfarm:s01') — straight off the hardware, with no
-    farm-mapping filtering or off-channel simulation applied. This is the
-    ground-truth counterpart to /farm/{farm_id}/history/actual, which shows
-    twin-processed (post-filter, post-simulation) data instead.
-    """
-    return get_raw_sensor_history(f"smartfarm:{key}")
- 
 
 @app.get("/farm/{farm_id}/scenarios")
 def farm_scenarios_scoped(farm_id: str):

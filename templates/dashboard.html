@@ -1315,7 +1315,12 @@ async function toggleRealSensorEnabled(farm, sensor){
   renderContent();
 
   try{
-    const res = await fetch(`/sensors/${rawKey}/enabled`, {
+    // Per-FARM route: only this farm's mapping is affected. The old
+    // /sensors/{rawKey}/enabled route (still used elsewhere as the
+    // catalog-wide default) used to be the only option here, which is
+    // exactly why switching a sensor off on one farm switched it off on
+    // every farm it was mapped to — there was only ever one shared flag.
+    const res = await fetch(`/sensors/${rawKey}/mappings/${farm.id}/enabled`, {
       method: 'PATCH',
       headers: {'Content-Type':'application/json'},
       body: JSON.stringify({channel, enabled: nextEnabled})
@@ -1327,8 +1332,15 @@ async function toggleRealSensorEnabled(farm, sensor){
       console.error(await res.text());
       return;
     }
+    const data = await res.json();
     const cat = sensorState.sensors.find(x=>x.rawKey===rawKey);
-    if(cat){ cat.enabled = cat.enabled || {}; cat.enabled[channel] = nextEnabled; }
+    if(cat){
+      const mapping = (cat.mappings || []).find(m=>m.farmId===farm.id);
+      if(mapping){
+        mapping.enabled = mapping.enabled || {};
+        mapping.enabled[channel] = nextEnabled;
+      }
+    }
   }catch(e){
     sensor.enabledReal = wasEnabled;
     renderContent();
@@ -1416,12 +1428,42 @@ async function loadSensors(){
 
 // Derive ONE farm's Twin-tab sensor rows from the catalog's mappings.
 // A real sensor contributes one row PER VISIBLE CHANNEL (its full channel
-// list, narrowed by that specific mapping's channel subset if it has one,
-// then with any catalog-level disabled channels removed — disabled means
-// the backend sync loop won't deliver that channel to ANY farm, so it
-// shouldn't appear here either). A virtual sensor contributes one row.
-// Existing values are carried over by key so a rebuild never causes a
-// visible flash/reset of whatever was already on screen.
+// list, narrowed by that specific mapping's channel subset if it has one).
+// A virtual sensor contributes one row. Existing values are carried over
+// by key so a rebuild never causes a visible flash/reset of whatever was
+// already on screen.
+//
+// min/max/enabled precedence (mirrors the backend's _effective_enabled /
+// _effective_range exactly, so what's displayed always matches what the
+// next sync cycle will actually do): THIS MAPPING's own override first,
+// the sensor-wide catalog default second. This is what lets the same
+// sensor's channel be 10-23 on one farm and 30-47 on another, and be
+// switched off on one farm while staying live on every other farm it's
+// mapped to — previously every farm read the same shared catalog value,
+// which is exactly why one farm's edit used to leak into every other one.
+function effectiveRange(cat, mapping, channel){
+  const mr = (mapping.ranges || {})[channel];
+  if(mr && (mr.min !== undefined && mr.min !== null || mr.max !== undefined && mr.max !== null)){
+    return {
+      min: (mr.min !== undefined && mr.min !== null) ? mr.min : 0,
+      max: (mr.max !== undefined && mr.max !== null) ? mr.max : 100,
+    };
+  }
+  const minMap = cat.min || {};
+  const maxMap = cat.max || {};
+  return {
+    min: (minMap[channel] !== undefined && minMap[channel] !== null) ? minMap[channel] : 0,
+    max: (maxMap[channel] !== undefined && maxMap[channel] !== null) ? maxMap[channel] : 100,
+  };
+}
+
+function effectiveEnabled(cat, mapping, channel){
+  const mv = (mapping.enabled || {})[channel];
+  if(mv !== undefined && mv !== null) return mv;
+  const cv = (cat.enabled || {})[channel];
+  return cv !== false; // default true if never set anywhere
+}
+
 function rebuildFarmSensorsFromCatalog(farm){
   if(!farm) return;
   const oldByKey = new Map(farm.sensors.map(s=>[s.key, s]));
@@ -1434,27 +1476,22 @@ function rebuildFarmSensorsFromCatalog(farm){
     if(cat.source === 'real'){
       const allChannels = cat.channels || [];
       const visible = (mapping.channels && mapping.channels.length) ? mapping.channels : allChannels;
-      const enabledMap = cat.enabled || {};
-      const minMap = cat.min || {};
-      const maxMap = cat.max || {};
 
       visible.forEach(ch=>{
-        const min = (minMap[ch] !== undefined && minMap[ch] !== null) ? minMap[ch] : 0;
-        const max = (maxMap[ch] !== undefined && maxMap[ch] !== null) ? maxMap[ch] : 100;
+        const {min, max} = effectiveRange(cat, mapping, ch);
         const existing = oldByKey.get(ch);
         next.push({
           key: ch,
           name: ch,
           unit: '',
           mode: 'actual',
-          // enabledReal: true = live hardware data is accepted for this channel.
-          // false = administratively switched off — this row STAYS in the
-          // real/actual section (mode never changes) but its value is now
-          // generated within min/max instead of coming from the device.
-          // Always read fresh from the catalog (the real source of truth) so
-          // a change made anywhere — this Twin tab, the Sensors tab, another
-          // browser tab — is reflected consistently everywhere.
-          enabledReal: enabledMap[ch] !== false,
+          // enabledReal: true = live hardware data is accepted for this
+          // channel ON THIS FARM. false = administratively switched off
+          // for this farm only — stays in the real/actual section, but
+          // its value is generated within this farm's effective min/max
+          // instead of coming from the device. Resolved per-mapping, so
+          // two farms can disagree about the same physical channel.
+          enabledReal: effectiveEnabled(cat, mapping, ch),
           min, max,
           decimals: (max - min) < 5 ? 2 : 1,
           value: existing ? existing.value : round((min + max) / 2, 1),
@@ -1462,10 +1499,7 @@ function rebuildFarmSensorsFromCatalog(farm){
         });
       });
     } else {
-      const minMap = cat.min || {};
-      const maxMap = cat.max || {};
-      const min = (minMap[cat.rawKey] !== undefined && minMap[cat.rawKey] !== null) ? minMap[cat.rawKey] : 0;
-      const max = (maxMap[cat.rawKey] !== undefined && maxMap[cat.rawKey] !== null) ? maxMap[cat.rawKey] : 100;
+      const {min, max} = effectiveRange(cat, mapping, cat.rawKey);
       const existing = oldByKey.get(cat.rawKey);
       next.push({
         key: cat.rawKey,
@@ -1613,7 +1647,7 @@ function renderSensors(){
             ${addMappingRow(s)}
           </div>
           <div class="sensor-detail-block">
-            <div class="sensor-detail-label">Per-channel range &amp; on/off — saved to the sensor catalog, applies for every farm and survives refresh</div>
+            <div class="sensor-detail-label">Default range &amp; on/off — the fallback used by any farm that hasn't set its own range for this channel. To set a DIFFERENT range or on/off state for one specific farm, use that farm's Twin or Settings tab instead.</div>
             ${channelRangeEditor(s)}
           </div>
         </div>
@@ -1788,7 +1822,12 @@ async function saveSensorRangeFor(farmId, sensorKey, minElId, maxElId, statusElI
   if(statusEl) statusEl.textContent = 'Saving…';
 
   try{
-    const res = await fetch(`/sensors/${rawKey}/range`, {
+    // Per-FARM route: only this farm's mapping is affected. Previously
+    // this called the catalog-wide /sensors/{rawKey}/range endpoint,
+    // which is exactly why setting a range on one farm changed it on
+    // every other farm that sensor was mapped to — there was only ever
+    // one shared min/max per channel, full stop.
+    const res = await fetch(`/sensors/${rawKey}/mappings/${farmId}/range`, {
       method: 'PATCH',
       headers: {'Content-Type':'application/json'},
       body: JSON.stringify({channel, min, max})
@@ -1799,9 +1838,14 @@ async function saveSensorRangeFor(farmId, sensorKey, minElId, maxElId, statusElI
     }
     const cat = sensorState.sensors.find(x=>x.rawKey===rawKey);
     if(cat){
-      cat.min = cat.min || {}; cat.max = cat.max || {};
-      if(min !== null) cat.min[channel] = min;
-      if(max !== null) cat.max[channel] = max;
+      const mapping = (cat.mappings || []).find(m=>m.farmId===farmId);
+      if(mapping){
+        mapping.ranges = mapping.ranges || {};
+        const r = mapping.ranges[channel] || {};
+        if(min !== null) r.min = min;
+        if(max !== null) r.max = max;
+        mapping.ranges[channel] = r;
+      }
     }
     if(min !== null) sensor.min = min;
     if(max !== null) sensor.max = max;

@@ -2,62 +2,146 @@ import random
 import time
 import requests
 
-from app.ditto_reader import get_actual, get_virtual, get_twin, thing_id_for_farm, thing_exists
+from app.ditto_reader import get_actual, get_twin, thing_id_for_farm, thing_exists
 from app.ditto_writer import DITTO_BASE_URL, AUTH, MERGE_HEADERS
 from app.farm_registry import list_farm_thing_ids
 from app.sensor_registry import get_all_sensors, unmap_sensors_for_farm
-from app.history_service import save_actual_sensor_history, save_virtual_sensor_history, save_raw_sensor_history
+from app.history_service import save_actual_sensor_history, save_raw_sensor_history
 
 
-def _simulated_value(sensor: dict, channel: str):
+def _effective_enabled(sensor: dict, mapping: dict, channel: str) -> bool:
     """
-    Generate one fallback reading for a channel that's been administratively
-    switched off, using the min/max range saved for it on the Sensors/Twin
-    page. Defaults to 0-100 if no range was ever saved for this channel, so
-    an old sensor with no saved range still gets *something* rather than
-    erroring out mid-sync.
+    A channel's effective on/off state for ONE specific farm mapping.
+
+    Checks that mapping's own "enabled" override first; only if it has
+    none for this channel does it fall back to the sensor-wide default.
+    This is the core of the per-farm fix: two farms mapped to the same
+    sensor can now disagree about whether a channel is on, because each
+    farm's mapping carries its own answer instead of all of them sharing
+    one sensor-level flag.
     """
-    lo = (sensor.get("min") or {}).get(channel, 0)
-    hi = (sensor.get("max") or {}).get(channel, 100)
+    mapping_value = (mapping.get("enabled") or {}).get(channel)
+    if mapping_value is not None:
+        return mapping_value
+    return (sensor.get("enabled") or {}).get(channel, True)
+
+
+def _effective_range(sensor: dict, mapping: dict, channel: str):
+    """
+    A channel's effective (min, max) for ONE specific farm mapping.
+
+    Same precedence as _effective_enabled: that mapping's own "ranges"
+    override first, sensor-wide default second, 0-100 last resort. This
+    is what lets the same sensor's channel — e.g. boron — be 10-23 on
+    one farm and 30-47 on another, instead of one shared range leaking
+    across every farm it's mapped to.
+    """
+    mapping_range = (mapping.get("ranges") or {}).get(channel)
+    if mapping_range and (mapping_range.get("min") is not None or mapping_range.get("max") is not None):
+        lo = mapping_range.get("min", 0)
+        hi = mapping_range.get("max", 100)
+    else:
+        lo = (sensor.get("min") or {}).get(channel, 0)
+        hi = (sensor.get("max") or {}).get(channel, 100)
     if lo > hi:
         lo, hi = hi, lo
+    return lo, hi
+
+
+def _simulated_value(sensor: dict, mapping: dict, channel: str):
+    """
+    Generate one fallback reading for a channel that's off FOR THIS FARM,
+    using whichever range is effective for this specific mapping (its own
+    override if it has one, otherwise the sensor-wide default). Defaults
+    to 0-100 if neither was ever saved, so an old sensor with no saved
+    range still gets *something* rather than erroring out mid-sync.
+    """
+    lo, hi = _effective_range(sensor, mapping, channel)
     return round(random.uniform(lo, hi), 2)
 
 
-def _apply_channel_filters(sensor: dict, readings: dict, mapping_channels) -> dict:
+def _apply_channel_filters(sensor: dict, mapping: dict, readings: dict) -> dict:
     """
     Narrow a device's raw readings down to what one specific farm mapping
     is actually allowed to receive, AND substitute a simulated value for
-    any channel that's been switched off.
+    any channel that's off FOR THIS FARM SPECIFICALLY.
 
-    mapping_channels: None means "every channel this sensor reports" for
-    this mapping; a list means "only these channels go to this farm".
+    mapping["channels"]: None means "every channel this sensor reports"
+    for this mapping; a list means "only these channels go to this farm".
 
-    A channel turned off (enabled[channel] is False) is off for EVERY
-    mapping, regardless of that mapping's own channel subset — turning a
-    channel off means "this channel is no longer live hardware data
-    anywhere", not just "don't show it on one farm". Rather than dropping
-    the key (which froze the farm's last real value forever), we now write
-    a freshly random value each cycle within the saved min/max range, so
-    Ditto keeps receiving a live-looking reading for it. The instant it's
-    switched back on, the very next cycle resumes writing the real device
-    reading instead — there is no separate "catch up" step needed.
+    A channel's on/off state and simulated range are both resolved via
+    _effective_enabled/_effective_range above — this mapping's own
+    override if it has one, the sensor-wide default otherwise. That is
+    the actual fix for "switching a sensor off on one farm switches it
+    off everywhere": the decision is made per-mapping now, not from one
+    shared sensor-level flag every farm used to read from identically.
     """
-    enabled = sensor.get("enabled") or {}
+    mapping_channels = mapping.get("channels")
     allowed = set(mapping_channels) if mapping_channels is not None else None
+
+    sensor_enabled_keys = set((sensor.get("enabled") or {}).keys())
+    mapping_enabled_keys = set((mapping.get("enabled") or {}).keys())
     result = {}
 
-    channels_to_consider = allowed if allowed is not None else set(readings.keys()) | set(enabled.keys())
+    channels_to_consider = allowed if allowed is not None else (
+        set(readings.keys()) | sensor_enabled_keys | mapping_enabled_keys
+    )
     channels_to_consider -= {"sensorId", "sensorType"}
 
     for k in channels_to_consider:
-        if enabled.get(k) is False:
-            result[k] = _simulated_value(sensor, k)
+        if not _effective_enabled(sensor, mapping, k):
+            result[k] = _simulated_value(sensor, mapping, k)
         elif k in readings:
             result[k] = readings[k]
         # else: channel is on but the device hasn't reported it yet — skip, nothing to send
 
     return result
+
+
+def snapshot_raw_sensor_data():
+    """
+    Container 1: snapshot exactly what every real sensor's OWN Ditto thing
+    currently holds — no farm mapping, no channel subsetting, no off-channel
+    simulation. Runs for every real catalog entry regardless of whether it
+    has any farm mappings at all, because this answers "what did the sensor
+    say" independent of "where is that data being used".
+
+    Deliberately separate from sync_real_sensors_to_farms(): that function
+    only looks at sensors with at least one mapping (it has nothing to do
+    otherwise), which would silently skip a freshly-installed, not-yet-mapped
+    sensor here too if the two were combined into one loop.
+    """
+    try:
+        sensors = get_all_sensors()
+    except Exception as e:
+        print("raw snapshot: could not read sensor catalog:", e)
+        return
+
+    for s in sensors:
+        if s["source"] != "real":
+            continue
+
+        device_id = s["deviceId"] or s["key"]
+        sensor_type = s.get("sensorType")
+        if not sensor_type:
+            continue
+
+        device_thing_id = f"smartfarm:{device_id}"
+        try:
+            twin = get_twin(device_thing_id)
+        except Exception as e:
+            print(f"raw snapshot: could not read device {device_thing_id}:", e)
+            continue
+
+        feature = twin.get("features", {}).get(sensor_type, {})
+        readings = feature.get("properties", {}).get("readings", {})
+        if not readings:
+            continue  # device thing exists but has never published anything yet
+
+        try:
+            save_raw_sensor_history(device_id, sensor_type, readings, device_thing_id)
+        except Exception as e:
+            print(f"raw snapshot: could not save history for {device_thing_id}:", e)
 
 
 def sync_real_sensors_to_farms():
@@ -103,17 +187,6 @@ def sync_real_sensors_to_farms():
         feature = twin.get("features", {}).get(sensor_type, {})
         readings = feature.get("properties", {}).get("readings", {})
 
-        # Container #1: the EXACT reading off this device, untouched —
-        # saved immediately, before _apply_channel_filters does any
-        # enable/disable substitution or per-farm channel narrowing.
-        # One document per device per sync cycle, regardless of how many
-        # farms it's mapped to.
-        if readings:
-            try:
-                save_raw_sensor_history(readings, device_thing_id)
-            except Exception as e:
-                print(f"history logger error (raw, {device_thing_id}):", e)
-
         # NOTE: previously this skipped the whole sensor if the device had
         # never reported anything (`if not readings: continue`). That also
         # accidentally skipped channels that are switched OFF and only need
@@ -129,7 +202,7 @@ def sync_real_sensors_to_farms():
             if not farm_id:
                 continue
 
-            clean_readings = _apply_channel_filters(s, readings, mapping.get("channels"))
+            clean_readings = _apply_channel_filters(s, mapping, readings)
             if not clean_readings:
                 continue
 
@@ -162,10 +235,15 @@ def start_history_logger():
 
     while True:
 
-        # 1. Bridge: push mapped real sensor readings into their farms
+        # 1. Container 1: snapshot every real sensor's exact own data,
+        #    independent of farm mapping entirely.
+        snapshot_raw_sensor_data()
+
+        # 2. Bridge: push mapped real sensor readings into their farms
         sync_real_sensors_to_farms()
 
-        # 2. Snapshot every farm's actual properties into Mongo history
+        # 3. Container 2: snapshot every farm's actual properties (post-twin,
+        #    post-mapping, post-filtering) into Mongo history.
         try:
             thing_ids = list_farm_thing_ids()
         except Exception as e:
@@ -176,15 +254,8 @@ def start_history_logger():
             try:
                 actual = get_actual(thing_id)
                 save_actual_sensor_history(actual, thing_id=thing_id)
+                print(f"history saved: {thing_id}")
             except Exception as e:
-                print(f"history logger error (actual, {thing_id}):", e)
- 
-            try:
-                virtual = get_virtual(thing_id)
-                save_virtual_sensor_history(virtual, thing_id=thing_id)
-            except Exception as e:
-                print(f"history logger error (virtual, {thing_id}):", e)
- 
-            print(f"history saved: {thing_id}")
+                print(f"history logger error ({thing_id}):", e)
 
         time.sleep(30)
