@@ -1,4 +1,5 @@
 import re
+import time
 import requests
 from requests.auth import HTTPBasicAuth
 
@@ -13,8 +14,18 @@ EXCLUDED_THING_IDS = {"smartfarm:sensor_catalog", "smartfarm:field01"}
 # Physical sensor devices look like smartfarm:s01, smartfarm:s02 ...
 SENSOR_PATTERN = re.compile(r"^smartfarm:s\d+$")
 
-# Sequential farm naming: farm01, farm02 ...
-FARM_ID_PATTERN = re.compile(r"^smartfarm:farm(\d+)$")
+# Farm naming: farm_<YYYYMMDDHHMMSS>, e.g. farm_20260623091500
+# Timestamp of creation moment (local time), not sequential and not
+# derived from the typed name — so it carries no confusing "why is this
+# farm04" meaning, and as a bonus tells you at a glance when a farm was
+# created just by reading the ID.
+FARM_ID_PATTERN = re.compile(r"^smartfarm:farm_(\d{14})$")
+
+_MAX_GENERATION_ATTEMPTS = 10
+
+
+def _timestamp_suffix() -> str:
+    return time.strftime("%Y%m%d%H%M%S")
 
 
 def list_farm_thing_ids() -> list:
@@ -58,13 +69,26 @@ def list_sensor_thing_ids() -> list:
 
 
 def next_farm_id() -> str:
-    used = []
-    for thing_id in list_farm_thing_ids():
-        match = FARM_ID_PATTERN.match(thing_id)
-        if match:
-            used.append(int(match.group(1)))
-    next_number = (max(used) + 1) if used else 1
-    return f"farm{next_number:02d}"
+    """
+    Generate a fresh, unique farm ID from the current timestamp — e.g.
+    farm_20260623091500.
+
+    Not derived from the farm name (see chat history for why: renames,
+    duplicate names, special characters all make slugified IDs messy)
+    and not sequential (no more farm01/farm02/farm03 — those numbers
+    carried no real meaning and got confusing once farms were deleted,
+    leaving gaps). Collision-checked against existing thingIds; on the
+    rare case two farms are created within the same second, this waits
+    a second and retries rather than ever returning a colliding ID.
+    """
+    existing = set(list_farm_thing_ids())
+    for attempt in range(_MAX_GENERATION_ATTEMPTS):
+        candidate = f"farm_{_timestamp_suffix()}"
+        thing_id = f"smartfarm:{candidate}"
+        if thing_id not in existing:
+            return candidate
+        time.sleep(1)
+    raise RuntimeError("Could not generate a unique farm ID after several attempts")
 
 
 def create_farm(name: str, field: str = None, crop: str = None) -> dict:

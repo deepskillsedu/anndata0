@@ -7,9 +7,38 @@ from app.mongodb_service import (
     virtual_sensor_history,
     raw_sensor_history
 )
+from app.ditto_reader import get_twin
+
+
+def _farm_name_for(thing_id: str) -> str:
+    """
+    Look up the human-readable farm name (attributes.name in Ditto) for
+    a farm thingId, so every history document is self-describing without
+    needing to join back to Ditto later.
+
+    No caching here on purpose — this only runs for farm-related history
+    (actual/virtual snapshots every 30s, plus discrete edit events), not
+    for the raw per-sensor snapshot loop, so call volume stays low. If
+    the Ditto lookup fails for any reason (farm deleted mid-write, Ditto
+    briefly unreachable, etc.), fall back to thing_id rather than letting
+    a name lookup failure block history logging — better an incomplete
+    label than a dropped history document.
+    """
+    try:
+        twin = get_twin(thing_id)
+        name = twin.get("attributes", {}).get("name")
+        return name if name else thing_id
+    except Exception as e:
+        print(f"history_service: could not resolve farm name for {thing_id}:", e)
+        return thing_id
 
 
 def save_raw_sensor_history(device_id, sensor_type, readings, thing_id):
+    """
+    Per-device raw snapshot — thing_id here is the physical sensor's own
+    Ditto thing (smartfarm:s01 etc.), not a farm, so there is no farm
+    name to attach. This is deliberately pre-mapping, pre-farm data.
+    """
     document = {
         "timestamp": datetime.utcnow(),
         "thingId": thing_id,
@@ -29,6 +58,7 @@ def save_actual_sensor_history(data, thing_id):
     document = {
         "timestamp": datetime.utcnow(),
         "thingId": thing_id,
+        "farmName": _farm_name_for(thing_id),
         **data
     }
 
@@ -51,6 +81,7 @@ def save_actual_override(
     document = {
         "timestamp": datetime.utcnow(),
         "thingId": thing_id,
+        "farmName": _farm_name_for(thing_id),
         "overrideProperty": property_name,
         "before": before_state,
         "after": after_state,
@@ -77,6 +108,7 @@ def save_virtual_change(
     document = {
         "timestamp": datetime.utcnow(),
         "thingId": thing_id,
+        "farmName": _farm_name_for(thing_id),
         "changedProperty": property_name,
         "before": before_state,
         "after": after_state,
@@ -86,17 +118,11 @@ def save_virtual_change(
     virtual_history.insert_one(document)
 
 
-def save_virtual_sensor_history(data, thing_id):
-    """
-    Periodic full-feature snapshot of a farm's virtual properties — the
-    direct counterpart to save_actual_sensor_history. Called from
-    history_logger's loop on the same cadence as the actual snapshot.
-    """
-
+def save_virtual_sensor_history(data, thing_id="smartfarm:twin01"):
     document = {
         "timestamp": datetime.utcnow(),
         "thingId": thing_id,
+        "farmName": _farm_name_for(thing_id),
         **data
     }
-
     virtual_sensor_history.insert_one(document)

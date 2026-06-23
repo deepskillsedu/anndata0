@@ -2,11 +2,11 @@ import random
 import time
 import requests
 
-from app.ditto_reader import get_actual, get_twin, thing_id_for_farm, thing_exists
+from app.ditto_reader import get_actual, get_virtual, get_twin, thing_id_for_farm, thing_exists
+from app.history_service import save_actual_sensor_history, save_virtual_sensor_history, save_raw_sensor_history
 from app.ditto_writer import DITTO_BASE_URL, AUTH, MERGE_HEADERS
 from app.farm_registry import list_farm_thing_ids
 from app.sensor_registry import get_all_sensors, unmap_sensors_for_farm
-from app.history_service import save_actual_sensor_history, save_raw_sensor_history
 
 
 def _effective_enabled(sensor: dict, mapping: dict, channel: str) -> bool:
@@ -254,6 +254,10 @@ def start_history_logger():
             try:
                 actual = get_actual(thing_id)
                 save_actual_sensor_history(actual, thing_id=thing_id)
+
+                virtual = get_virtual(thing_id)              
+                save_virtual_sensor_history(virtual, thing_id=thing_id)   
+
                 print(f"history saved: {thing_id}")
             except Exception as e:
                 print(f"history logger error ({thing_id}):", e)
