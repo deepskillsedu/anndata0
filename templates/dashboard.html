@@ -903,20 +903,48 @@ function renameFarm(id, name){
 
 function triggerImageUpload(){
   const input = document.getElementById('hiddenImgInput');
+  input.removeAttribute('capture');
   input.click();
 }
-function handleImageUpload(evt){
+
+function triggerCamera(){
+  const input = document.getElementById('hiddenImgInput');
+  input.setAttribute('capture', 'environment');
+  input.click();
+}
+
+async function handleImageUpload(evt){
   const farm = activeFarm(); if(!farm) return;
   const file = evt.target.files[0];
   if(!file) return;
-  const reader = new FileReader();
-  reader.onload = ()=>{
-    farm.image = {dataUrl: reader.result, ts: Date.now()};
-    renderContent();
-  };
-  reader.readAsDataURL(file);
+
+  const formData = new FormData();
+  formData.append('file', file);
+
+  try{
+    const res = await fetch(`/farm/${farm.id}/image`, {method:'POST', body: formData});
+    if(!res.ok){ alert('Image upload failed.'); return; }
+  }catch(e){
+    alert('Could not reach backend to save image.');
+    return;
+  }
+
+  const ts = Date.now();
+  farm.image = { dataUrl: `/farm/${farm.id}/image?t=${ts}`, ts };
+  renderContent();
   evt.target.value = '';
 }
+
+async function deleteImage(farmId){
+  const farm = state.farms.find(f=>f.id===farmId); if(!farm) return;
+  if(!confirm('Remove this photo?')) return;
+  try{
+    await fetch(`/farm/${farmId}/image`, {method:'DELETE'});
+  }catch(e){ /* best effort */ }
+  farm.image = null;
+  renderContent();
+}
+
 function viewImage(){
   const farm = activeFarm();
   if(farm && farm.image) window.open(farm.image.dataUrl, '_blank');
@@ -968,6 +996,23 @@ function toggleSensorMode(key){
   const sensor = farm.sensors.find(s=>s.key===key); if(!sensor) return;
   sensor.mode = sensor.mode==='actual' ? 'virtual' : 'actual';
   renderContent();
+}
+
+async function loadFarmImage(farm){
+  try{
+    const res = await fetch(`/farm/${farm.id}/image/meta`);
+    if(!res.ok){ farm.image = null; return; }
+    const meta = await res.json();
+    if(meta.hasImage){
+      const ts = new Date(meta.ts).getTime();
+      farm.image = { dataUrl: `/farm/${farm.id}/image?t=${ts}`, ts };
+    } else {
+      farm.image = null;
+    }
+  }catch(e){
+    console.error('loadFarmImage:', e);
+    farm.image = null;
+  }
 }
 
 /* ---------------- scenarios ---------------- */
@@ -1944,10 +1989,19 @@ function renderDashboard(farm){
   }
 
   const imgBox = farm.image
-    ? `<div class="img-upload-box" onclick="viewImage()"><img src="${farm.image.dataUrl}" alt="Farm plant photo"></div>
-       <div class="img-meta"><b>Image uploaded</b>${new Date(farm.image.ts).toLocaleString()}</div>`
-    : `<div class="img-upload-box" onclick="triggerImageUpload()"><span class="plus">+</span></div>
-       <div class="img-meta">No image yet — click to upload a plant or drone photo</div>`;
+        ? `<div class="img-upload-box" onclick="viewImage()"><img src="${farm.image.dataUrl}" alt="Farm plant photo"></div>
+          <div class="img-meta"><b>Image uploaded</b> · ${new Date(farm.image.ts).toLocaleString()}</div>
+          <div style="display:flex;gap:8px;margin-top:8px;">
+            <button class="ghost small" onclick="triggerImageUpload()">⬆ New image</button>
+            <button class="ghost small" onclick="triggerCamera()">📷 Retake</button>
+            <button class="ghost small danger-btn" onclick="deleteImage('${farm.id}')">✕ Remove</button>
+          </div>`
+        : `<div class="img-upload-box" onclick="triggerImageUpload()"><span class="plus">+</span></div>
+          <div class="img-meta">No image yet</div>
+          <div style="display:flex;gap:8px;margin-top:8px;">
+            <button class="primary small" onclick="triggerImageUpload()">⬆ Upload</button>
+            <button class="ghost small" onclick="triggerCamera()">📷 Take photo</button>
+          </div>`;
 
   return `
     ${renderScenarioBar(farm)}
@@ -2165,7 +2219,7 @@ function renderScenarioConfigSection(farm){
     const res = await fetch('/farms');
     if(res.ok){
       const data = await res.json();
-      (data.farms || []).forEach(f=>{
+      for(const f of (data.farms || [])){
         const farm = createFarm(f.name || f.farm_id, false, {
           id: f.farm_id,
           meta: {
@@ -2175,8 +2229,9 @@ function renderScenarioConfigSection(farm){
           }
         });
         state.farms.push(farm);
-        loadScenarios(farm).then(()=>renderAll());
-      });
+        await loadFarmImage(farm);
+        await loadScenarios(farm);
+      }
     }
   }catch(e){ /* backend unreachable — sidebar will show no farms */ }
 

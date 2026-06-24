@@ -48,14 +48,19 @@ from app.sensor_registry import (
     acknowledge_sensor
 )
 
-from fastapi.staticfiles import StaticFiles   # add this import at the top with other imports
+#image section
+
+
+
+
+from fastapi.staticfiles import StaticFiles   # this import at the top with other imports
 
 app = FastAPI(
     title="Smart Farm Digital Twin",
     version="2.2.0"
 )
 
-app.mount("/static", StaticFiles(directory="templates/logo"), name="static")  # add this line
+app.mount("/static", StaticFiles(directory="templates/logo"), name="static")
 
 
 @app.on_event("startup")
@@ -70,6 +75,61 @@ def startup():
         print("Sensor Catalog Ready")
     except Exception as e:
         print("Sensor catalog init error:", e)
+
+
+
+
+
+#image section
+
+from fastapi import UploadFile, File
+from app.image_service import (
+    save_farm_image,
+    get_farm_image,
+    get_farm_image_meta,
+    get_farm_image_history,
+    delete_current_farm_image
+)
+from fastapi.responses import JSONResponse, Response
+import base64
+
+@app.post("/farm/{farm_id}/image")
+async def upload_farm_image(farm_id: str, file: UploadFile = File(...)):
+    contents = await file.read()
+    b64 = base64.b64encode(contents).decode("utf-8")
+
+    try:
+        attrs = get_attributes(thing_id_for_farm(farm_id))
+        farm_name = attrs.get("name", farm_id)
+    except Exception:
+        farm_name = farm_id  # Ditto lookup failed — fall back to the id so upload still succeeds
+
+    result = save_farm_image(farm_id, farm_name, b64, file.content_type)
+    return result
+
+@app.get("/farm/{farm_id}/image")
+def get_image(farm_id: str):
+    doc = get_farm_image(farm_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="No image for this farm")
+    img_bytes = base64.b64decode(doc["data"])
+    return Response(content=img_bytes, media_type=doc["contentType"])
+
+@app.get("/farm/{farm_id}/image/meta")
+def get_image_meta(farm_id: str):
+    return get_farm_image_meta(farm_id)
+
+@app.get("/farm/{farm_id}/image/history")
+def get_image_history(farm_id: str):
+    return {"history": get_farm_image_history(farm_id)}
+
+@app.delete("/farm/{farm_id}/image")
+def delete_farm_image(farm_id: str):
+    delete_current_farm_image(farm_id)
+    return {"status": "deleted"}
+
+
+
 
 
 #  models 
