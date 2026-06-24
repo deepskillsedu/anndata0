@@ -15,7 +15,7 @@
 
 
 
-from app.mongodb_service import actual_sensor_history, virtual_sensor_history, raw_sensor_history
+from app.mongodb_service import actual_sensor_history, raw_sensor_history
 
 
 def get_actual_history(thing_id, limit=100):
@@ -29,19 +29,6 @@ def get_actual_history(thing_id, limit=100):
 
     return list(cursor)
 
-
-def get_virtual_history(thing_id, limit=100):
-    """Read-side counterpart to get_actual_history, for the periodic
-    virtual-feature snapshots saved by save_virtual_sensor_history."""
-
-    cursor = (
-        virtual_sensor_history
-        .find({"thingId": thing_id}, {"_id": 0})
-        .sort("timestamp", -1)
-        .limit(limit)
-    )
-
-    return list(cursor)
 
 
 def get_raw_sensor_history(device_thing_id, limit=100):

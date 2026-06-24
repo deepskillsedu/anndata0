@@ -1,6 +1,6 @@
 import requests
 from requests.auth import HTTPBasicAuth
-from app.history_service import save_virtual_change, save_actual_override
+from app.history_service import save_actual_override
 from app.ditto_reader import get_virtual, get_actual, thing_exists
 
 DITTO_BASE_URL = "http://localhost:8080/api/2/things"
@@ -165,7 +165,6 @@ def update_virtual_properties(properties: dict, thing_id: str):
     changes = {}
     for name, value in properties.items():
         old_value = current.get(name)
-        save_virtual_change(name, old_value, value, thing_id=thing_id)
         changes[name] = {"oldValue": old_value, "value": value}
     return {"status": "success", "changes": changes}
 

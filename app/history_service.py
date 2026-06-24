@@ -3,7 +3,6 @@ from datetime import datetime
 from app.mongodb_service import (
     actual_sensor_history,
     actual_override_history,
-    virtual_history,
     virtual_sensor_history,
     raw_sensor_history
 )
@@ -89,33 +88,6 @@ def save_actual_override(
     }
 
     actual_override_history.insert_one(document)
-
-
-def save_virtual_change(
-    property_name,
-    before_state,
-    after_state,
-    thing_id
-):
-    """
-    Discrete before/after edit event for one 'virtual' property — fired
-    by ditto_writer.update_virtual_properties() every time someone PATCHes
-    /farm/{id}/virtual. Deliberately separate from save_virtual_sensor_history
-    (the periodic full snapshot) so a document is never ambiguous between
-    "this is a full snapshot" and "this is a single-field diff".
-    """
-
-    document = {
-        "timestamp": datetime.utcnow(),
-        "thingId": thing_id,
-        "farmName": _farm_name_for(thing_id),
-        "changedProperty": property_name,
-        "before": before_state,
-        "after": after_state,
-        "source": "dashboard"
-    }
-
-    virtual_history.insert_one(document)
 
 
 def save_virtual_sensor_history(data, thing_id="smartfarm:twin01"):

@@ -469,3 +469,64 @@ def unmap_sensors_for_farm(farm_id: str) -> dict:
                 print(f"unmap_sensors_for_farm: could not clear '{key}': {e}")
 
     return {"status": "success", "clearedSensors": cleared}
+
+
+
+def ingest_reading(device_id: str, channels: dict) -> dict:
+    """
+    Called by sensor_listner.py whenever a new MQTT reading arrives.
+    Registers the device in the catalog if not seen before (isNew=True),
+    then updates its channels and lastSeen. Never overwrites an existing
+    name, mappings, or ranges — only touches discovery metadata.
+    """
+    if not device_id or device_id == "undefined":
+        return {"status": "skipped", "reason": "invalid device_id"}
+
+    ensure_catalog()
+    now = datetime.utcnow().isoformat()
+    existing = get_sensor(device_id)
+    channel_keys = [k for k in channels.keys() if k and k != "undefined"]
+
+    if not existing:
+        # Brand new sensor — register it as newly discovered
+        _merge_feature(device_id, {
+            "name": device_id,
+            "source": "real",
+            "sensorType": "soil",
+            "channels": channel_keys,
+            "mappings": [],
+            "min": {k: 0 for k in channel_keys},
+            "max": {k: 100 for k in channel_keys},
+            "enabled": {k: True for k in channel_keys},
+            "isNew": True,
+            "firstSeen": now,
+            "lastSeen": now,
+        })
+    else:
+        # Already known — just refresh channels and lastSeen
+        # Merge channels: keep existing ones, add any new ones
+        existing_channels = existing.get("channels") or []
+        merged_channels = list(set(existing_channels + channel_keys))
+
+        existing_min = existing.get("min") or {}
+        existing_max = existing.get("max") or {}
+        existing_enabled = existing.get("enabled") or {}
+
+        # Add defaults for any brand new channels only
+        for k in channel_keys:
+            if k not in existing_min:
+                existing_min[k] = 0
+            if k not in existing_max:
+                existing_max[k] = 100
+            if k not in existing_enabled:
+                existing_enabled[k] = True
+
+        _merge_feature(device_id, {
+            "channels": merged_channels,
+            "lastSeen": now,
+            "min": existing_min,
+            "max": existing_max,
+            "enabled": existing_enabled,
+        })
+
+    return {"status": "success", "device_id": device_id, "channels": channel_keys}

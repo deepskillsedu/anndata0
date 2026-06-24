@@ -21,10 +21,9 @@ import paho.mqtt.client as mqtt
 
 from app.sensor_registry import ingest_reading
 
-MQTT_BROKER = "10.212.106.71"
+MQTT_BROKER = "localhost"
 MQTT_PORT = 1883
-TOPIC_FILTER = "farm/soil/+"
-LEGACY_UNIT = "1"
+TOPIC_FILTER = "sensors/+/+"   # sensors/<type>/<deviceId>
 
 
 def _device_id_from_topic(topic: str) -> str:
@@ -38,8 +37,9 @@ def _on_connect(client, userdata, flags, rc):
 
 def _on_message(client, userdata, msg):
     device_id = _device_id_from_topic(msg.topic)
-    if device_id == LEGACY_UNIT:
-        return  # already handled by Ditto's own MQTT connection -> twin01
+
+    if not device_id or device_id == "undefined":
+        return
 
     try:
         payload = json.loads(msg.payload.decode("utf-8"))
@@ -47,7 +47,12 @@ def _on_message(client, userdata, msg):
         print("sensor_listener: bad payload on", msg.topic, e)
         return
 
-    channels = {k: v for k, v in payload.items() if isinstance(v, (int, float))}
+    channels = {
+        k: v for k, v in payload.items()
+        if isinstance(v, (int, float))
+        and k
+        and k != "undefined"
+    }
     if not channels:
         return
 
